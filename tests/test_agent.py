@@ -1,11 +1,14 @@
 """Unit tests for nautilus.agent — helpers + ReAct loop (mock LLM).
 
 Covers:
+- _estimate_tokens: ASCII/CJK/mixed/empty token estimation
 - _truncate: short text passthrough, long text truncation with marker
+- _truncate_for_llm: LLM feed truncation with bilingual marker
 - _print_tool_call: all tool name formatting (requires UTF-8 stdout)
 - run_agent with mock LLM: full ReAct loop (write→bash→final answer)
 - run_agent with mock LLM: max_iter truncation
 - run_agent with mock LLM: error self-correction (edit fails → write succeeds)
+- run_agent with mock LLM: token budget truncation on large tool output
 
 NOTE: Run with PYTHONIOENCODING=utf-8 on Windows to handle emoji in agent.py.
 """
@@ -18,7 +21,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nautilus.agent import _print_tool_call, _truncate, run_agent
+from nautilus.agent import (
+    _estimate_tokens,
+    _print_tool_call,
+    _truncate,
+    _truncate_for_llm,
+    run_agent,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +100,68 @@ class TestTruncate:
         result = _truncate(text, limit=50)
         assert "已截断" in result
         assert "共 100 字符" in result
+
+
+# ---------------------------------------------------------------------------
+# _estimate_tokens tests
+# ---------------------------------------------------------------------------
+
+class TestEstimateTokens:
+    def test_pure_ascii(self):
+        # "hello world" = 11 chars, 11//4 = 2
+        assert _estimate_tokens("hello world") == 2
+
+    def test_pure_cjk(self):
+        # "你好世界" = 4 chars, 4//2 = 2
+        assert _estimate_tokens("你好世界") == 2
+
+    def test_empty_string(self):
+        assert _estimate_tokens("") == 0
+
+    def test_mixed_ascii_cjk(self):
+        # "hello 你好" = 6 ASCII + 2 CJK → 6//4 + 2//2 = 1 + 1 = 2
+        assert _estimate_tokens("hello 你好") == 2
+
+    def test_long_code_text(self):
+        # 4000 chars of ASCII → 1000 tokens
+        text = "x" * 4000
+        assert _estimate_tokens(text) == 1000
+
+    def test_none_safety(self):
+        assert _estimate_tokens(None) == 0
+
+
+# ---------------------------------------------------------------------------
+# _truncate_for_llm tests
+# ---------------------------------------------------------------------------
+
+class TestTruncateForLlm:
+    def test_short_text_passthrough(self):
+        assert _truncate_for_llm("short text") == "short text"
+
+    def test_exact_limit_no_truncation(self):
+        text = "x" * 6000
+        assert _truncate_for_llm(text, max_chars=6000) == text
+
+    def test_long_text_truncated_with_bilingual_marker(self):
+        text = "x" * 10000
+        result = _truncate_for_llm(text, max_chars=6000)
+        assert len(result) > 6000  # includes marker
+        assert result[:6000] == text[:6000]
+        assert "输出已截断" in result
+        assert "Output truncated" in result
+        assert "10000" in result
+        assert "6000" in result
+
+    def test_custom_max_chars(self):
+        text = "x" * 500
+        result = _truncate_for_llm(text, max_chars=100)
+        assert result[:100] == text[:100]
+        assert "500" in result
+        assert "100" in result
+
+    def test_empty_string(self):
+        assert _truncate_for_llm("") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -318,3 +389,79 @@ class TestRunAgentErrorRecovery:
         captured = capsys.readouterr()
         assert "文件不存在" in captured.out
         assert "文件创建成功" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# run_agent — token budget truncation on large tool output
+# ---------------------------------------------------------------------------
+
+class TestRunAgentTokenBudget:
+    """Scenario: bash returns a very large output (10000 chars).
+    The agent should truncate it before feeding to LLM messages,
+    and the truncation marker should be present in the tool result message.
+    """
+
+    def test_large_tool_output_truncated_in_messages(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+
+        # Capture messages passed to the LLM on the 2nd call
+        captured_messages = []
+
+        large_output = "x" * 10000
+
+        responses = [
+            make_response(
+                content="running command",
+                tool_calls=[make_tool_call("call_1", "bash", {
+                    "command": "echo big_output",
+                })],
+            ),
+            make_response(
+                content="done",
+                tool_calls=None,
+            ),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            # Capture messages on every call
+            captured_messages.append(list(kwargs.get("messages", [])))
+            assert i < len(responses), f"Unexpected LLM call #{i}"
+            return responses[i]
+
+        # Patch execute_tool to return our large output
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.execute_tool", return_value=large_output):
+                run_agent(
+                    prompt="run a command with big output",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    max_tool_output_chars=500,  # small budget for testing
+                )
+
+        # The 2nd LLM call (idx=1) should have received messages containing
+        # the truncated tool result
+        assert len(captured_messages) >= 2
+
+        # Find the tool message in the 2nd call's messages
+        tool_messages = [
+            m for m in captured_messages[1]
+            if isinstance(m, dict) and m.get("role") == "tool"
+        ]
+        assert len(tool_messages) == 1
+
+        tool_content = tool_messages[0]["content"]
+        # Should be truncated (not the full 10000 chars)
+        assert len(tool_content) < 10000
+        # Should contain the truncation marker
+        assert "输出已截断" in tool_content
+        assert "Output truncated" in tool_content
+        assert "10000" in tool_content
+        assert "500" in tool_content
