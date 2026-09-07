@@ -45,7 +45,7 @@ echo "解释这个项目" | nautilus
 
 ```bash
 nautilus --help                    # 查看 CLI 帮助
-python -m pytest tests/ -v -o "addopts="   # 运行 77 个单元测试
+python -m pytest tests/ -v -o "addopts="   # 运行 91 个单元测试
 ```
 
 ---
@@ -83,7 +83,7 @@ nautilus/
 └── README.md
 ```
 
-**总计：378 行 Python 源码 + 77 个测试用例（全部通过）。**
+**总计：378 行 Python 源码 + 91 个测试用例（全部通过）。**
 
 ---
 
@@ -182,7 +182,7 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 | `test_agent.py` | 15 | `_truncate`/`_print_tool_call` + mock LLM 的 ReAct 闭环/max_iter 截断/错误自纠 |
 | `test_llm.py` | 10 | create_client 无 key/显式参数/环境变量/优先级链 |
 | `test_cli.py` | 16 | --help/无 prompt/stdin 管道/参数解析/默认值 |
-| **合计** | **77** | **全部通过** |
+| **合计** | **91** | **全部通过** |
 
 ---
 
@@ -195,7 +195,7 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 | `nautilus-v1-实现总结.md` | 实际行数、验证结果、使用方式 |
 | `nautilus-系统目标.md` | 企业架构（TOGAF 四域）+ 约束理论（Goldratt ToC/DBR）双视角分析 |
 | `nautilus-结果质量评估标准.md` | Hermes 评估器三维模型适配：正确性/过程精准度/简洁度 |
-| `nautilus-v1-验证报告.md` | 77 个测试用例验证报告，含已知问题和未验证项 |
+| `nautilus-v1-验证报告.md` | 91 个测试用例验证报告，含已知问题和未验证项 |
 | `nautilus名称含义.md` | 鹦鹉螺对数螺旋与 ReAct 循环的隐喻映射 |
 
 ---
