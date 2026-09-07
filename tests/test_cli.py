@@ -143,6 +143,13 @@ class TestCLIArgumentParsing:
         assert call_kwargs.kwargs.get("max_iter") == 5
 
     @patch("nautilus.__main__.run_agent")
+    def test_max_tool_output_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--max-tool-output", "3000", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("max_tool_output_chars") == 3000
+
+    @patch("nautilus.__main__.run_agent")
     def test_default_max_iter_is_20(self, mock_run):
         with patch("sys.argv", ["nautilus", "task"]):
             main()
@@ -162,3 +169,10 @@ class TestCLIArgumentParsing:
             main()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("api_key") is None
+
+    @patch("nautilus.__main__.run_agent")
+    def test_default_max_tool_output_is_6000(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("max_tool_output_chars") == 6000
