@@ -1,0 +1,68 @@
+"""CLI entry point for Nautilus coding agent.
+
+Usage:
+    nautilus "创建一个 hello.py"
+    nautilus --model qwen-plus --base-url https://xxx "修复 bug"
+    nautilus --max-iter 30 "重构 utils.py"
+"""
+
+import argparse
+import sys
+
+from .agent import run_agent
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="nautilus",
+        description="Nautilus — 鹦鹉螺：螺旋逼近答案的 coding agent",
+    )
+    parser.add_argument(
+        "prompt",
+        nargs="?",
+        help="要交给 agent 的任务描述。不传则从 stdin 读取（支持管道）。",
+    )
+    parser.add_argument(
+        "--model",
+        default="gpt-4",
+        help="模型名（默认 gpt-4）。OpenAI 兼容 API 可填 qwen-plus 等。",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="API key。不传则读 OPENAI_API_KEY 环境变量。",
+    )
+    parser.add_argument(
+        "--base-url",
+        default=None,
+        help="API base URL。不传则读 OPENAI_BASE_URL 环境变量。",
+    )
+    parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=20,
+        help="agent 循环最大迭代次数（默认 20）。",
+    )
+
+    args = parser.parse_args()
+
+    # Get prompt from positional arg or stdin.
+    prompt = args.prompt
+    if not prompt and not sys.stdin.isatty():
+        prompt = sys.stdin.read().strip()
+
+    if not prompt:
+        parser.print_help()
+        sys.exit(1)
+
+    run_agent(
+        prompt=prompt,
+        model=args.model,
+        api_key=args.api_key,
+        base_url=args.base_url,
+        max_iter=args.max_iter,
+    )
+
+
+if __name__ == "__main__":
+    main()
