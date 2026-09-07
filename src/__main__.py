@@ -43,6 +43,12 @@ def main() -> None:
         default=20,
         help="agent 循环最大迭代次数（默认 20）。",
     )
+    parser.add_argument(
+        "--max-tool-output",
+        type=int,
+        default=6000,
+        help="单次工具结果回灌 LLM 的最大字符数（默认 6000，约 1500 tokens）。",
+    )
 
     args = parser.parse_args()
 
@@ -61,6 +67,7 @@ def main() -> None:
         api_key=args.api_key,
         base_url=args.base_url,
         max_iter=args.max_iter,
+        max_tool_output_chars=args.max_tool_output,
     )
 
 
