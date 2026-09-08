@@ -465,3 +465,140 @@ class TestRunAgentTokenBudget:
         assert "Output truncated" in tool_content
         assert "10000" in tool_content
         assert "500" in tool_content
+
+
+# ---------------------------------------------------------------------------
+# run_agent — permission approval for bash
+# ---------------------------------------------------------------------------
+
+class TestRunAgentApproval:
+    """Test the permission approval gate for bash commands.
+
+    When approval=True, bash commands should prompt the user.
+    - User says 'n' → command refused, observation fed back to LLM
+    - User says 'y' → command executed normally
+    - approval=False (default) → no prompt, executes directly
+    """
+
+    def test_approval_rejected_bash_command(self, tmp_path, capsys, monkeypatch):
+        """User rejects bash command → refusal observation fed back to LLM."""
+        monkeypatch.chdir(tmp_path)
+
+        responses = [
+            make_response(
+                content="running command",
+                tool_calls=[make_tool_call("call_1", "bash", {
+                    "command": "rm -rf /",
+                })],
+            ),
+            make_response(
+                content="understood, command was rejected",
+                tool_calls=None,
+            ),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            return responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        # Mock input() to reject
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("builtins.input", return_value="n"):
+                run_agent(
+                    prompt="run rm -rf /",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    approval=True,
+                )
+
+        captured = capsys.readouterr()
+        assert "用户拒绝了该命令" in captured.out
+
+    def test_approval_accepted_bash_command(self, tmp_path, capsys, monkeypatch):
+        """User accepts bash command → executed normally."""
+        monkeypatch.chdir(tmp_path)
+
+        responses = [
+            make_response(
+                content="running command",
+                tool_calls=[make_tool_call("call_1", "bash", {
+                    "command": "echo hello_approval",
+                })],
+            ),
+            make_response(
+                content="done",
+                tool_calls=None,
+            ),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            return responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("builtins.input", return_value="y"):
+                run_agent(
+                    prompt="run echo",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    approval=True,
+                )
+
+        captured = capsys.readouterr()
+        assert "hello_approval" in captured.out
+        assert "exit code: 0" in captured.out
+
+    def test_approval_disabled_by_default(self, tmp_path, capsys, monkeypatch):
+        """approval=False (default) → no prompt, executes directly."""
+        monkeypatch.chdir(tmp_path)
+
+        responses = [
+            make_response(
+                content="running command",
+                tool_calls=[make_tool_call("call_1", "bash", {
+                    "command": "echo no_approval",
+                })],
+            ),
+            make_response(
+                content="done",
+                tool_calls=None,
+            ),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            return responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            # input() should never be called
+            with patch("builtins.input", side_effect=AssertionError("input() should not be called")):
+                run_agent(
+                    prompt="run echo",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    approval=False,
+                )
+
+        captured = capsys.readouterr()
+        assert "no_approval" in captured.out
