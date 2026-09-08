@@ -39,6 +39,21 @@ class TestCLIHelp:
         assert "--base-url" in result.stdout
         assert "--max-iter" in result.stdout
 
+    def test_help_without_encoding_override(self):
+        """`nautilus --help` should work even without PYTHONIOENCODING (GBK fix)."""
+        env = {k: v for k, v in __import__("os").environ.items()}
+        env.pop("PYTHONIOENCODING", None)
+        result = subprocess.run(
+            [sys.executable, "-m", "nautilus", "--help"],
+            capture_output=True,
+            timeout=10,
+            env=env,
+        )
+        assert result.returncode == 0
+        # Output contains Chinese characters (鹦鹉螺) and should not crash
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        assert "nautilus" in stdout
+
     def test_help_shows_description(self):
         result = subprocess.run(
             [sys.executable, "-m", "nautilus", "--help"],
