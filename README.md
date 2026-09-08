@@ -2,7 +2,7 @@
 
 > **鹦鹉螺：螺旋逼近答案的 coding agent**
 >
-> Nautilus 是一个从第一性原理出发、用最小代码量表达 coding agent 本质的 Python 项目。它不是产品级工具，而是一个**学习项目**——用 ~878 行代码验证"LLM + 6 个工具 + 一个 while 循环"就是 coding agent 的不可约核心，并通过 E2E 真实场景验证确认可用。
+> Nautilus 是一个从第一性原理出发、用最小代码量表达 coding agent 本质的 Python 项目。它不是产品级工具，而是一个**学习项目**——用 ~895 行代码验证"LLM + 6 个工具 + 一个 while 循环"就是 coding agent 的不可约核心，并通过 E2E 真实场景验证确认可用。
 
 名称取自鹦鹉螺的对数螺旋（Logarithmic Spiral）：ReAct 循环不是原地打转的死循环，而是螺旋式逼近——每一圈 Thought→Action→Observation 都基于上一轮观察修正认知，朝答案收敛。
 
@@ -88,10 +88,10 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="  # 运行 125 �
 ```
 nautilus/
 ├── pyproject.toml              # 16 行 — 项目元数据 + openai 依赖 + CLI 入口（v0.2.0）
-├── nautilus/                   # 源码包（878 行）
+├── nautilus/                   # 源码包（895 行）
 │   ├── __init__.py             #   1 行 — 版本号
 │   ├── __main__.py             #  96 行 — CLI 入口（argparse + 9 个参数）
-│   ├── agent.py                # 241 行 — 核心 ReAct 循环 + token 预算 + stream/approval/text_mode 分支
+│   ├── agent.py                # 258 行 — 核心 ReAct 循环 + token 预算 + stream/approval/text_mode 分支 + stream 序列化修复
 │   ├── llm.py                  # 125 行 — OpenAI 兼容 client 工厂 + complete_with_retry + stream_complete
 │   ├── prompts.py              #  75 行 — 系统提示词 + SYSTEM_PROMPT_TEXT_MODE
 │   └── tools.py                # 340 行 — 6 个工具 + execute_tool 路由 + .gitignore 过滤
@@ -104,7 +104,7 @@ nautilus/
 └── README.md
 ```
 
-**总计：878 行 Python 源码 + 125 个测试用例（全部通过）。**
+**总计：895 行 Python 源码 + 125 个测试用例（全部通过）。**
 
 ---
 
@@ -202,7 +202,7 @@ for i in range(max_iter):
 ## 演进路线
 
 ```
-v1 (MVP, ~378行)            v2 (可用, ~878行)          v3 (产品级)
+v1 (MVP, ~378行)            v2 (可用, ~895行)          v3 (产品级)
 ─────────────               ─────────────              ──────────
 agent 循环                 + Grep/Glob(搜索)           + 子 agent(上下文隔离)
 4 个核心工具               + 流式输出                   + 上下文压缩
@@ -237,7 +237,9 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 | `test_cli.py` | 22 | --help/stdin/参数解析 + --stream/--approval/--max-tool-output/--text-mode |
 | **合计** | **125** | **全部通过** |
 
-### E2E 端到端测试（Ollama + deepseek-r1:8b + text-mode）
+### E2E 端到端测试
+
+**text-mode（deepseek-r1:8b）**：
 
 | 场景 | 命令 | 结果 |
 |------|------|------|
@@ -246,6 +248,17 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 | 流式输出 | `nautilus --text-mode --stream "read hello.py"` | ✅ token 实时打印 → read_file → 回答 |
 | 权限审批（同意） | `echo "y" \| nautilus --text-mode --approval "echo ok"` | ✅ 弹 prompt → y → bash 执行成功 |
 | 权限审批（拒绝） | `echo "n" \| nautilus --text-mode --approval "echo no"` | ✅ bash 未执行 → 直接文字回答 |
+
+**native function calling（qwen2.5:7b）**：
+
+| 场景 | 命令 | 结果 |
+|------|------|------|
+| 基础任务 | `nautilus "创建 hello.py，运行它"` | ✅ write_file → bash（python3 失败自纠）→ hello world |
+| Grep/Glob | `nautilus "用 glob 搜索 .py，用 grep 搜索 divide"` | ✅ glob 找到 3 文件 → grep 定位 calc.py:4+6 |
+| 流式输出 | `nautilus --stream "read hello.py"` | ✅ read_file → 流式打印 → 正确回答 |
+| 权限审批（同意） | `echo "y" \| nautilus --approval "echo ok"` | ✅ 弹 prompt → y → bash 执行成功 |
+| 权限审批（拒绝） | `echo "n" \| nautilus --approval "echo no"` | ✅ bash 未执行 → observation 回灌 |
+| 流式+审批 | `echo "y" \| nautilus --stream --approval "echo combined"` | ✅ 组合正常工作 |
 
 ---
 
@@ -279,7 +292,7 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 
 > **agent 的本质不在单个组件的强度，而在组合方式。**
 
-Claude Code 的 51 万行是在这 878 行之上叠加多 agent / 上下文压缩 / MCP 协议 / 记忆系统 / Skills 插件的工程化。Nautilus 用最简组合验证：**LLM + 6 个工具 + 一个 while 循环 = 可用的 coding agent**。
+Claude Code 的 51 万行是在这 895 行之上叠加多 agent / 上下文压缩 / MCP 协议 / 记忆系统 / Skills 插件的工程化。Nautilus 用最简组合验证：**LLM + 6 个工具 + 一个 while 循环 = 可用的 coding agent**。
 
 参考标杆：
 
