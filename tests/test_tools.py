@@ -177,6 +177,51 @@ class TestBash:
 
 
 # ---------------------------------------------------------------------------
+# dangerous command filtering tests
+# ---------------------------------------------------------------------------
+
+class TestDangerousCommandFilter:
+    def test_rm_rf_root_blocked(self):
+        result = bash("rm -rf /")
+        assert "危险命令" in result
+        assert "exit code" not in result
+
+    def test_rm_rf_home_blocked(self):
+        result = bash("rm -rf ~")
+        assert "危险命令" in result
+
+    def test_rm_rf_star_blocked(self):
+        result = bash("rm -rf *")
+        assert "危险命令" in result
+
+    def test_format_c_blocked(self):
+        result = bash("format c:")
+        assert "危险命令" in result
+
+    def test_mkfs_blocked(self):
+        result = bash("mkfs.ext4 /dev/sda")
+        assert "危险命令" in result
+
+    def test_safe_command_not_blocked(self):
+        result = bash("echo safe_command")
+        assert "safe_command" in result
+        assert "exit code: 0" in result
+
+    def test_dangerous_allowed_with_flag(self):
+        result = bash("rm -rf /", allow_dangerous=True)
+        # Should not be blocked (will fail on actual execution, but not with "危险命令")
+        assert "危险命令" not in result
+
+    def test_case_insensitive_match(self):
+        result = bash("RM -RF /")
+        assert "危险命令" in result
+
+    def test_dangerous_in_pipeline_blocked(self):
+        result = bash("echo test | rm -rf /")
+        assert "危险命令" in result
+
+
+# ---------------------------------------------------------------------------
 # execute_tool router tests
 # ---------------------------------------------------------------------------
 
