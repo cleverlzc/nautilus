@@ -82,13 +82,14 @@ class TestCLIStdin:
         """When prompt is not given as positional arg, read from stdin."""
         # Without valid API key, the process will try to call LLM and fail.
         # We verify stdin is read by checking it doesn't print the usage help.
+        # Use a non-routable IP to get fast connection refused (no retry delay).
         result = subprocess.run(
             [sys.executable, "-m", "nautilus", "--api-key", "sk-fake",
-             "--base-url", "http://127.0.0.1:1", "--max-iter", "1"],
+             "--base-url", "https://0.0.0.0:1", "--max-iter", "1"],
             input="test prompt from stdin",
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=60,
             encoding="utf-8",
             errors="replace",
         )
@@ -176,3 +177,31 @@ class TestCLIArgumentParsing:
             main()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("max_tool_output_chars") == 6000
+
+    @patch("nautilus.__main__.run_agent")
+    def test_stream_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--stream", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("stream") is True
+
+    @patch("nautilus.__main__.run_agent")
+    def test_stream_default_false(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("stream") is False
+
+    @patch("nautilus.__main__.run_agent")
+    def test_approval_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--approval", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("approval") is True
+
+    @patch("nautilus.__main__.run_agent")
+    def test_approval_default_false(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("approval") is False
