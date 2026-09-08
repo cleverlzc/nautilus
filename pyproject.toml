@@ -1,6 +1,6 @@
 [project]
 name = "nautilus"
-version = "0.1.0"
+version = "0.2.0"
 description = "Nautilus — 鹦鹉螺：螺旋逼近答案的 coding agent"
 requires-python = ">=3.10"
 dependencies = ["openai>=1.0.0"]
