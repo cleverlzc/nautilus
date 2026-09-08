@@ -49,6 +49,24 @@ def main() -> None:
         default=6000,
         help="单次工具结果回灌 LLM 的最大字符数（默认 6000，约 1500 tokens）。",
     )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        default=False,
+        help="启用流式输出，实时打印 LLM 生成的 token。",
+    )
+    parser.add_argument(
+        "--approval",
+        action="store_true",
+        default=False,
+        help="启用权限审批模式，bash 命令执行前需用户确认。",
+    )
+    parser.add_argument(
+        "--text-mode",
+        action="store_true",
+        default=False,
+        help="启用文本模式工具调用（兼容不支持 function calling 的模型，如 deepseek-r1）。",
+    )
 
     args = parser.parse_args()
 
@@ -68,6 +86,9 @@ def main() -> None:
         base_url=args.base_url,
         max_iter=args.max_iter,
         max_tool_output_chars=args.max_tool_output,
+        stream=args.stream,
+        approval=args.approval,
+        text_mode=args.text_mode,
     )
 
 
