@@ -239,7 +239,7 @@ def run_agent(
                         )
                     continue
 
-            result = execute_tool(call)
+            result = execute_tool(call, allow_dangerous=approval)
             print(f"   → {_truncate(result)}\n")
 
             # In text mode, feed results back as user messages (no tool_call_id)
