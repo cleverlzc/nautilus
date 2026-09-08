@@ -193,7 +193,46 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         return f"错误：写入失败：{e}"
 
 
-def bash(command: str) -> str:
+# Patterns that indicate potentially destructive shell commands.
+# If matched and not --approval, the command is blocked with a warning.
+_DANGEROUS_PATTERNS = [
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf *",
+    "rm -rf .",
+    "rmdir /s /q",
+    "format c:",
+    "format /fs:",
+    "mkfs.",
+    "dd if=/dev/zero",
+    "dd if=/dev/random",
+    ":(){:|:&};:",
+    "shutdown",
+    "reboot",
+    "halt",
+    "init 0",
+    "init 6",
+]
+
+
+def _check_dangerous(command: str) -> str | None:
+    """Return a warning message if the command matches a dangerous pattern, else None."""
+    lower = command.lower().strip()
+    for pattern in _DANGEROUS_PATTERNS:
+        if pattern in lower:
+            return (
+                f"⚠️ 危险命令检测：命令匹配危险模式 '{pattern}'。"
+                f"如需执行，请使用 --approval 模式并确认。"
+            )
+    return None
+
+
+def bash(command: str, allow_dangerous: bool = False) -> str:
+    # Check for dangerous commands (unless explicitly allowed via --approval)
+    if not allow_dangerous:
+        warning = _check_dangerous(command)
+        if warning:
+            return warning
     try:
         result = subprocess.run(
             command,
@@ -313,8 +352,11 @@ def grep(pattern: str, path: str | None = None, root: str = ".") -> str:
         return f"错误：搜索失败：{e}"
 
 
-def execute_tool(tool_call) -> str:
-    """Route a tool call to the right function and return its result as a string."""
+def execute_tool(tool_call, allow_dangerous: bool = False) -> str:
+    """Route a tool call to the right function and return its result as a string.
+
+    When allow_dangerous=True, bypass dangerous command filtering (used by --approval).
+    """
     name = tool_call.function.name
     try:
         args = json.loads(tool_call.function.arguments or "{}")
@@ -336,5 +378,5 @@ def execute_tool(tool_call) -> str:
     if name == "grep":
         return grep(args.get("pattern", ""), args.get("path"), args.get("root", "."))
     if name == "bash":
-        return bash(args.get("command", ""))
+        return bash(args.get("command", ""), allow_dangerous=allow_dangerous)
     return f"错误：未知工具：{name}"
