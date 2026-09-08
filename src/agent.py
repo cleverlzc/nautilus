@@ -189,8 +189,25 @@ def run_agent(
 
         # Append the assistant's message to history.
         # In text mode, append as a plain dict (no tool_calls field for API).
+        # In stream mode (native), _StreamedMessage is not JSON-serializable by the SDK,
+        # so convert to dict with tool_calls in OpenAI format.
         if text_mode:
             messages.append({"role": "assistant", "content": message.content})
+        elif stream:
+            msg_dict = {"role": "assistant", "content": message.content}
+            if message.tool_calls:
+                msg_dict["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in message.tool_calls
+                ]
+            messages.append(msg_dict)
         else:
             messages.append(message)
 
