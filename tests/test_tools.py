@@ -19,6 +19,8 @@ from nautilus.tools import (
     bash,
     edit_file,
     execute_tool,
+    glob,
+    grep,
     read_file,
     write_file,
 )
@@ -204,6 +206,18 @@ class TestExecuteTool:
         result = execute_tool(call)
         assert "routed" in result
 
+    def test_route_glob(self, tmp_path):
+        (tmp_path / "test.py").write_text("x")
+        call = MockToolCall("c4b", "glob", json.dumps({"pattern": "*.py", "root": str(tmp_path)}))
+        result = execute_tool(call)
+        assert "test.py" in result
+
+    def test_route_grep(self, tmp_path):
+        (tmp_path / "test.py").write_text("hello world\n")
+        call = MockToolCall("c4c", "grep", json.dumps({"pattern": "hello", "root": str(tmp_path)}))
+        result = execute_tool(call)
+        assert "test.py:1:" in result
+
     def test_unknown_tool(self):
         call = MockToolCall("c5", "unknown_tool", json.dumps({}))
         result = execute_tool(call)
@@ -235,16 +249,18 @@ class TestExecuteTool:
 
 class TestToolSchemas:
     def test_schema_count(self):
-        assert len(TOOL_SCHEMAS) == 4
+        assert len(TOOL_SCHEMAS) == 6
 
     def test_schema_names(self):
         names = {s["function"]["name"] for s in TOOL_SCHEMAS}
-        assert names == {"read_file", "write_file", "edit_file", "bash"}
+        assert names == {"read_file", "write_file", "edit_file", "glob", "grep", "bash"}
 
     @pytest.mark.parametrize("tool_name,expected_params", [
         ("read_file", ["path"]),
         ("write_file", ["path", "content"]),
         ("edit_file", ["path", "old_string", "new_string"]),
+        ("glob", ["pattern", "root"]),
+        ("grep", ["pattern", "path", "root"]),
         ("bash", ["command"]),
     ])
     def test_schema_parameters(self, tool_name, expected_params):
@@ -252,13 +268,13 @@ class TestToolSchemas:
         params = list(schema["function"]["parameters"]["properties"].keys())
         assert params == expected_params
 
-    @pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file", "bash"])
+    @pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file", "glob", "grep", "bash"])
     def test_schema_has_required(self, tool_name):
         schema = next(s for s in TOOL_SCHEMAS if s["function"]["name"] == tool_name)
         required = schema["function"]["parameters"].get("required", [])
         assert len(required) > 0
 
-    @pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file", "bash"])
+    @pytest.mark.parametrize("tool_name", ["read_file", "write_file", "edit_file", "glob", "grep", "bash"])
     def test_schema_has_description(self, tool_name):
         schema = next(s for s in TOOL_SCHEMAS if s["function"]["name"] == tool_name)
         assert schema["function"]["description"]
@@ -266,3 +282,90 @@ class TestToolSchemas:
     def test_all_schemas_are_function_type(self):
         for schema in TOOL_SCHEMAS:
             assert schema["type"] == "function"
+
+
+# ---------------------------------------------------------------------------
+# glob tests
+# ---------------------------------------------------------------------------
+
+class TestGlob:
+    def test_glob_finds_python_files(self, tmp_path):
+        (tmp_path / "a.py").write_text("x")
+        (tmp_path / "b.py").write_text("y")
+        (tmp_path / "c.txt").write_text("z")
+        result = glob("*.py", root=str(tmp_path))
+        assert "a.py" in result
+        assert "b.py" in result
+        assert "c.txt" not in result
+
+    def test_glob_no_match(self, tmp_path):
+        (tmp_path / "a.py").write_text("x")
+        result = glob("*.java", root=str(tmp_path))
+        assert "未找到" in result
+
+    def test_glob_recursive(self, tmp_path):
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "deep.py").write_text("x")
+        result = glob("*.py", root=str(tmp_path))
+        assert "deep.py" in result
+
+    def test_glob_respects_gitignore(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("node_modules\n*.log\n")
+        (tmp_path / "app.py").write_text("x")
+        (tmp_path / "node_modules").mkdir()
+        (tmp_path / "node_modules" / "pkg.py").write_text("x")
+        (tmp_path / "debug.log").write_text("x")
+        result = glob("*.py", root=str(tmp_path))
+        assert "app.py" in result
+        assert "pkg.py" not in result
+        assert "debug.log" not in result
+
+
+# ---------------------------------------------------------------------------
+# grep tests
+# ---------------------------------------------------------------------------
+
+class TestGrep:
+    def test_grep_finds_matches(self, tmp_path):
+        (tmp_path / "a.py").write_text("def hello():\n    print('world')\n")
+        result = grep("hello", root=str(tmp_path))
+        assert "a.py:1:" in result
+        assert "hello" in result
+
+    def test_grep_returns_line_numbers(self, tmp_path):
+        (tmp_path / "b.py").write_text("line1\nline2\ntarget\nline4\n")
+        result = grep("target", root=str(tmp_path))
+        assert "b.py:3:target" in result
+
+    def test_grep_no_match(self, tmp_path):
+        (tmp_path / "a.py").write_text("nothing here\n")
+        result = grep("nonexistent", root=str(tmp_path))
+        assert "未找到" in result
+
+    def test_grep_specific_file(self, tmp_path):
+        (tmp_path / "a.py").write_text("foo\n")
+        (tmp_path / "b.py").write_text("bar\n")
+        result = grep("foo", path="a.py", root=str(tmp_path))
+        assert "a.py:1:foo" in result
+        assert "b.py" not in result
+
+    def test_grep_invalid_regex(self, tmp_path):
+        result = grep("[invalid", root=str(tmp_path))
+        assert "错误" in result
+        assert "正则" in result
+
+    def test_grep_skips_binary_files(self, tmp_path):
+        (tmp_path / "binary.bin").write_bytes(b"\x89PNG\r\n\x1a\n")
+        (tmp_path / "text.py").write_text("search_me\n")
+        result = grep("search_me", root=str(tmp_path))
+        assert "text.py:1:search_me" in result
+        assert "binary.bin" not in result
+
+    def test_grep_respects_gitignore(self, tmp_path):
+        (tmp_path / ".gitignore").write_text("vendor\n")
+        (tmp_path / "main.py").write_text("target_line\n")
+        (tmp_path / "vendor").mkdir()
+        (tmp_path / "vendor" / "lib.py").write_text("target_line\n")
+        result = grep("target_line", root=str(tmp_path))
+        assert "main.py" in result
+        assert "vendor" not in result
