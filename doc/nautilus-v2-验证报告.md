@@ -377,11 +377,11 @@ TypeError: Object of type _StreamedMessage is not JSON serializable
 
 | # | 测试场景 | 命令 | 结果 | 验证点 |
 |---|---------|------|------|--------|
-| 1 | **基础任务**：创建 hello.py + 运行 + 验证 | `nautilus --text-mode "创建一个 hello.py..."` | ✅ 通过 | write_file 创建 → bash 运行 → 输出 hello world → 最终回答 |
-| 2 | **Grep/Glob**：搜索 .py 文件 + 搜索 divide 函数 | `nautilus --text-mode "用 glob 搜索...用 grep 搜索..."` | ✅ 通过 | glob 找到 3 文件 → grep 定位 calc.py:4:def divide → 报告结果 |
-| 3 | **流式输出**：`--stream` 实时 token 输出 | `nautilus --text-mode --stream "read hello.py..."` | ✅ 通过 | 流式打印 content → read_file 工具调用 → 最终回答 |
-| 4a | **权限审批**：用户同意 bash | `echo "y" \| nautilus --text-mode --approval "echo approval_test_ok"` | ✅ 通过 | 弹 prompt → 用户 y → bash 执行成功 → exit code 0 |
-| 4b | **权限审批**：用户拒绝 bash | `echo "n" \| nautilus --text-mode --approval "echo should_not_appear"` | ✅ 通过 | bash 未执行，agent 直接给出文字回答 |
+| 1 | **基础任务**：创建 hello.py + 运行 + 验证 | `OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model deepseek-r1:8b --max-iter 10 --text-mode "创建一个 hello.py，内容为 print('hello world')，然后运行它，确认输出 hello world"` | ✅ 通过 | write_file 创建 → bash 运行 → 输出 hello world → 最终回答 |
+| 2 | **Grep/Glob**：搜索 .py 文件 + 搜索 divide 函数 | `OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model deepseek-r1:8b --max-iter 10 --text-mode "用 glob 搜索当前目录下所有 .py 文件，然后用 grep 搜索哪个文件包含 divide 函数，告诉我结果"` | ✅ 通过 | glob 找到 3 文件 → grep 定位 calc.py:4:def divide → 报告结果 |
+| 3 | **流式输出**：`--stream` 实时 token 输出 | `OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model deepseek-r1:8b --max-iter 5 --text-mode --stream "用 read_file 读取 hello.py 的内容，然后告诉我它有几行"` | ✅ 通过 | 流式打印 content → read_file 工具调用 → 最终回答 |
+| 4a | **权限审批**：用户同意 bash | `echo "y" \| OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model deepseek-r1:8b --max-iter 5 --text-mode --approval "用 bash 执行 echo approval_test_ok"` | ✅ 通过 | 弹 prompt → 用户 y → bash 执行成功 → exit code 0 |
+| 4b | **权限审批**：用户拒绝 bash | `echo "n" \| OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model deepseek-r1:8b --max-iter 5 --text-mode --approval "用 bash 执行 echo should_not_appear"` | ✅ 通过 | bash 未执行，agent 直接给出文字回答 |
 
 #### 测试详情
 
@@ -436,12 +436,12 @@ Agent 正确使用搜索工具：
 
 | # | 测试场景 | 命令 | 结果 | 验证点 |
 |---|---------|------|------|--------|
-| 1 | **基础任务**：创建 hello.py + 运行 + 验证 | `nautilus "创建一个 hello.py..."` | ✅ 通过 | write_file 创建 → bash 运行（python3 失败→自纠 python）→ hello world |
-| 2 | **Grep/Glob**：搜索 .py 文件 + 搜索 divide 函数 | `nautilus "用 glob 搜索...用 grep 搜索..."` | ✅ 通过 | glob 找到 3 文件 → grep 定位 calc.py:4+6 → 准确报告 |
-| 3 | **流式输出**：`--stream` 实时 token 输出 | `nautilus --stream "read hello.py..."` | ✅ 通过 | read_file 工具调用 → 流式 token 打印 → 正确回答（1 行） |
-| 4a | **权限审批**：用户同意 bash | `echo "y" \| nautilus --approval "echo native_approval_ok"` | ✅ 通过 | 弹 prompt → y → bash 执行成功 → exit code 0 |
-| 4b | **权限审批**：用户拒绝 bash | `echo "n" \| nautilus --approval "echo should_not_appear"` | ✅ 通过 | 弹 prompt → n → bash 未执行 → observation 回灌 → agent 理解被拒绝 |
-| 5 | **流式+审批组合** | `echo "y" \| nautilus --stream --approval "echo combined"` | ✅ 通过 | `--stream --approval` 组合正常工作，bash 审批后执行 |
+| 1 | **基础任务**：创建 hello.py + 运行 + 验证 | `OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model "ollama.rnd.huawei.com/library/qwen2.5:7b" --max-iter 10 "创建一个 hello.py，内容为 print('hello world')，然后运行它，确认输出 hello world"` | ✅ 通过 | write_file 创建 → bash 运行（python3 失败→自纠 python）→ hello world |
+| 2 | **Grep/Glob**：搜索 .py 文件 + 搜索 divide 函数 | `OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model "ollama.rnd.huawei.com/library/qwen2.5:7b" --max-iter 10 "用 glob 搜索当前目录下所有 .py 文件，然后用 grep 搜索哪个文件包含 divide 函数，告诉我结果"` | ✅ 通过 | glob 找到 3 文件 → grep 定位 calc.py:4+6 → 准确报告 |
+| 3 | **流式输出**：`--stream` 实时 token 输出 | `OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model "ollama.rnd.huawei.com/library/qwen2.5:7b" --max-iter 5 --stream "用 read_file 读取 hello.py 的内容，然后告诉我它有几行"` | ✅ 通过 | read_file 工具调用 → 流式 token 打印 → 正确回答（1 行） |
+| 4a | **权限审批**：用户同意 bash | `echo "y" \| OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model "ollama.rnd.huawei.com/library/qwen2.5:7b" --max-iter 5 --approval "用 bash 执行 echo native_approval_ok"` | ✅ 通过 | 弹 prompt → y → bash 执行成功 → exit code 0 |
+| 4b | **权限审批**：用户拒绝 bash | `echo "n" \| OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model "ollama.rnd.huawei.com/library/qwen2.5:7b" --max-iter 5 --approval "用 bash 执行 echo should_not_appear"` | ✅ 通过 | 弹 prompt → n → bash 未执行 → observation 回灌 → agent 理解被拒绝 |
+| 5 | **流式+审批组合** | `echo "y" \| OPENAI_API_KEY=test OPENAI_BASE_URL=http://127.0.0.1:11434/v1 PYTHONIOENCODING=utf-8 nautilus --model "ollama.rnd.huawei.com/library/qwen2.5:7b" --max-iter 5 --stream --approval "用 bash 执行 echo combined_stream_approval"` | ✅ 通过 | `--stream --approval` 组合正常工作，bash 审批后执行 |
 
 #### 测试详情
 
