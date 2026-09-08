@@ -1,8 +1,11 @@
-"""Tool definitions and execution router for the mini coding agent."""
+"""Tool definitions and execution router for the coding agent."""
 
+import fnmatch
 import json
 import os
+import re
 import subprocess
+from pathlib import Path
 
 
 # OpenAI function-calling schema for the core tools.
@@ -67,6 +70,52 @@ TOOL_SCHEMAS = [
                     },
                 },
                 "required": ["path", "old_string", "new_string"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glob",
+            "description": "递归搜索匹配指定模式的文件路径。支持 glob 通配符（*.py, **/*.ts 等）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "文件名匹配模式，如 *.py、**/*.ts。",
+                    },
+                    "root": {
+                        "type": "string",
+                        "description": "搜索根目录（默认当前目录）。",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep",
+            "description": "在文件中搜索匹配指定正则的行，返回 path:lineno:line 格式。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "正则表达式搜索模式。",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "限定搜索的文件路径（可选，不传则搜索整个 root）。",
+                    },
+                    "root": {
+                        "type": "string",
+                        "description": "搜索根目录（默认当前目录）。",
+                    },
+                },
+                "required": ["pattern"],
             },
         },
     },
@@ -166,6 +215,104 @@ def bash(command: str) -> str:
         return f"错误：执行失败：{e}"
 
 
+def _load_gitignore(root: str = ".") -> list[str]:
+    """读取 .gitignore，返回 pattern 列表。无 .gitignore 则返回空列表。"""
+    gitignore_path = os.path.join(root, ".gitignore")
+    patterns = []
+    try:
+        with open(gitignore_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    patterns.append(line.rstrip("/"))
+    except (FileNotFoundError, OSError):
+        pass
+    return patterns
+
+
+def _is_ignored(path: str, patterns: list[str]) -> bool:
+    """检查路径是否被 gitignore 规则匹配。支持基础模式（*.log, node_modules, dist）。"""
+    if not patterns:
+        return False
+    basename = os.path.basename(path)
+    for pattern in patterns:
+        if fnmatch.fnmatch(basename, pattern) or fnmatch.fnmatch(path, pattern):
+            return True
+        # 匹配路径中的任意目录段
+        parts = path.replace("\\", "/").split("/")
+        for part in parts:
+            if fnmatch.fnmatch(part, pattern):
+                return True
+    return False
+
+
+def glob(pattern: str, root: str = ".") -> str:
+    """递归匹配文件路径，返回匹配的文件列表（最多 200 条）。"""
+    try:
+        gitignore_patterns = _load_gitignore(root)
+        results = []
+        base = Path(root)
+        for p in base.rglob("*"):
+            if not p.is_file():
+                continue
+            rel = str(p.relative_to(base)).replace("\\", "/")
+            if _is_ignored(rel, gitignore_patterns):
+                continue
+            # 匹配 pattern：支持 basename 和 ** 前缀
+            if fnmatch.fnmatch(p.name, pattern) or fnmatch.fnmatch(rel, pattern):
+                results.append(rel)
+            if len(results) >= 200:
+                results.append(f"... [结果过多，仅显示前 200 条]")
+                break
+        if not results:
+            return "未找到匹配文件。"
+        return "\n".join(results)
+    except Exception as e:
+        return f"错误：搜索失败：{e}"
+
+
+def grep(pattern: str, path: str | None = None, root: str = ".") -> str:
+    """在文件中搜索匹配指定正则的行，返回 path:lineno:line 格式（最多 100 条）。"""
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"错误：正则表达式无效：{e}"
+
+    try:
+        gitignore_patterns = _load_gitignore(root)
+        results = []
+        base = Path(root)
+
+        if path:
+            # 限定搜索单个文件
+            target = Path(path)
+            files_to_search = [target if target.is_absolute() else base / target]
+        else:
+            # 递归搜索整个 root
+            files_to_search = [p for p in base.rglob("*") if p.is_file()]
+
+        for filepath in files_to_search:
+            rel = str(filepath.relative_to(base)) if filepath.is_relative_to(base) else str(filepath)
+            if _is_ignored(rel.replace("\\", "/"), gitignore_patterns):
+                continue
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    for lineno, line in enumerate(f, 1):
+                        if regex.search(line):
+                            results.append(f"{rel}:{lineno}:{line.rstrip()}")
+                            if len(results) >= 100:
+                                results.append(f"... [匹配过多，仅显示前 100 条]")
+                                return "\n".join(results)
+            except (UnicodeDecodeError, OSError):
+                continue  # 跳过二进制文件和不可读文件
+
+        if not results:
+            return "未找到匹配行。"
+        return "\n".join(results)
+    except Exception as e:
+        return f"错误：搜索失败：{e}"
+
+
 def execute_tool(tool_call) -> str:
     """Route a tool call to the right function and return its result as a string."""
     name = tool_call.function.name
@@ -184,6 +331,10 @@ def execute_tool(tool_call) -> str:
             args.get("old_string", ""),
             args.get("new_string", ""),
         )
+    if name == "glob":
+        return glob(args.get("pattern", ""), args.get("root", "."))
+    if name == "grep":
+        return grep(args.get("pattern", ""), args.get("path"), args.get("root", "."))
     if name == "bash":
         return bash(args.get("command", ""))
     return f"错误：未知工具：{name}"
