@@ -11,11 +11,11 @@
 | `nautilus/prompts.py` | 20 | 75 | 系统提示词 + glob/grep 工具说明 + 搜索准则 + SYSTEM_PROMPT_TEXT_MODE |
 | `nautilus/tools.py` | 189 | 340 | 6 个工具 schema + read/write/edit/glob/grep/bash + execute_tool 路由 + .gitignore 过滤 |
 | `nautilus/llm.py` | 19 | 125 | OpenAI 兼容 client 工厂 + complete_with_retry + stream_complete |
-| `nautilus/agent.py` | 81 | 241 | **核心 ReAct 循环** + token 预算控制 + stream/approval/text_mode 分支 |
+| `nautilus/agent.py` | 81 | 258 | **核心 ReAct 循环** + token 预算控制 + stream/approval/text_mode 分支 + stream 序列化修复 |
 | `nautilus/__main__.py` | 68 | 96 | CLI 入口 + `--stream`/`--approval`/`--text-mode` 参数 |
-| **源码合计** | **378** | **878** | |
+| **源码合计** | **378** | **895** | |
 
-**总计 878 行 Python 源码**（比 v1 的 378 行增加 500 行，主要是 glob/grep 工具函数、重试+流式封装、审批门逻辑、text-mode 解析器）。
+**总计 895 行 Python 源码**（比 v1 的 378 行增加 517 行，主要是 glob/grep 工具函数、重试+流式封装、审批门逻辑、text-mode 解析器、stream 序列化修复）。
 
 > **注**：v1 后期补充的 token 预算控制（`_estimate_tokens`/`_truncate_for_llm`）已计入 v1 行数。
 
@@ -43,13 +43,25 @@
 - ✅ .gitignore 过滤验证（glob/grep 排除 node_modules/*.log，无 .gitignore 时不过滤）
 - ✅ 单元测试 125 passed, 0 failed
 
-### E2E 端到端真实场景（Ollama + deepseek-r1:8b + text-mode）
+### E2E 端到端真实场景
+
+**text-mode（deepseek-r1:8b，5 个场景）**：
 
 - ✅ 基础任务：write_file 创建 hello.py → bash 运行 → 输出 hello world → 最终回答
 - ✅ Grep/Glob：glob 找到 3 个 .py 文件 → grep 定位 calc.py:4:def divide → 报告结果
 - ✅ 流式输出：--stream 实时打印 token → read_file 工具调用 → 最终回答
 - ✅ 权限审批（同意）：--approval 弹 prompt → 用户 y → bash 执行成功
 - ✅ 权限审批（拒绝）：--approval 弹 prompt → 用户 n → bash 未执行
+
+**native function calling（qwen2.5:7b，6 个场景）**：
+
+- ✅ 基础任务：write_file 创建 → bash 运行（python3 失败自纠）→ 最终回答
+- ✅ Grep/Glob：glob 找到 3 文件 → grep 定位 calc.py:4+6 → 准确报告
+- ✅ 流式输出：--stream + native tool_calls → read_file → 正确回答
+- ✅ 权限审批（同意）：弹 prompt → y → bash 执行成功
+- ✅ 权限审批（拒绝）：弹 prompt → n → observation 回灌 → agent 理解被拒绝
+- ✅ 流式+审批组合：--stream --approval 正常工作
+- ✅ 发现并修复 stream 序列化 bug（_StreamedMessage → dict 转换）
 
 ## 测试覆盖
 
@@ -97,6 +109,6 @@ v1 验证了 agent 的不可约本质——**LLM + 4 个工具 + 一个 while �
 
 v2 在此基础上补齐了"可用"的 5 个工程化能力 + 1 个 E2E 适配：搜索工具让 LLM 用更少 token 表达意图（挖尽瓶颈），错误恢复让 agent 不因网络抖动崩溃（提升鲁棒性），流式输出降低用户感知延迟（降低监督 OE），权限审批为 bash 危险命令加人类确认（安全兜底），.gitignore 感知避免垃圾文件污染上下文（控制库存），text-mode 适配让 agent 兼容任何 LLM（不限 function calling）。
 
-E2E 端到端真实场景验证（Ollama + deepseek-r1:8b）确认 agent 在真实 LLM 下正确工作——ReAct 循环、工具调用、流式输出、权限审批全部通过。
+E2E 端到端真实场景验证（text-mode + deepseek-r1:8b / native + qwen2.5:7b）确认 agent 在两种 LLM 模式下均正确工作——ReAct 循环、工具调用、流式输出、权限审批全部通过。
 
-Claude Code 的 51 万行是在这 878 行之上继续叠加多 agent / 上下文压缩 / MCP 协议 / 记忆系统 / Skills 插件的工程化。
+Claude Code 的 51 万行是在这 895 行之上继续叠加多 agent / 上下文压缩 / MCP 协议 / 记忆系统 / Skills 插件的工程化。
