@@ -9,6 +9,12 @@ Usage:
 import argparse
 import sys
 
+# Ensure stdout/stderr use UTF-8 encoding (fixes Windows GBK crash on emoji)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from .agent import run_agent
 
 
