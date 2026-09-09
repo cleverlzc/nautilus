@@ -73,6 +73,12 @@ def main() -> None:
         default=False,
         help="启用文本模式工具调用（兼容不支持 function calling 的模型，如 deepseek-r1）。",
     )
+    parser.add_argument(
+        "--max-context-tokens",
+        type=int,
+        default=32000,
+        help="对话历史的 token 预算（默认 32000，超出后丢弃最旧迭代）。",
+    )
 
     args = parser.parse_args()
 
@@ -95,6 +101,7 @@ def main() -> None:
         stream=args.stream,
         approval=args.approval,
         text_mode=args.text_mode,
+        max_context_tokens=args.max_context_tokens,
     )
 
 
