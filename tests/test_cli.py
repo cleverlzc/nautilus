@@ -194,6 +194,20 @@ class TestCLIArgumentParsing:
         assert call_kwargs.kwargs.get("max_tool_output_chars") == 6000
 
     @patch("nautilus.__main__.run_agent")
+    def test_max_context_tokens_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--max-context-tokens", "8000", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("max_context_tokens") == 8000
+
+    @patch("nautilus.__main__.run_agent")
+    def test_default_max_context_tokens_is_32000(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("max_context_tokens") == 32000
+
+    @patch("nautilus.__main__.run_agent")
     def test_stream_flag(self, mock_run):
         with patch("sys.argv", ["nautilus", "--stream", "task"]):
             main()
