@@ -8,7 +8,7 @@
 
 ## 一、参考来源：Hermes 评估器
 
-Hermes-Agent（Nous Research，2026-02 发布）引入了 Meta-Agent 自主进化能力，其核心是通过 GEPA 算法总结反思历史任务轨迹，优化 Skill 知识。华为云核心网 AI Lab 在《Skill自进化技术洞察及产品落地实践》中，将 Hermes 的评估器精细化定义为三个维度，量化衡量 Skill 自进化的质量：
+Hermes-Agent（Nous Research，2026-02 发布）引入了 Meta-Agent 自主进化能力，其核心是通过 GEPA 算法总结反思历史任务轨迹，优化 Skill 知识。将 Hermes 的评估器精细化定义为三个维度，量化衡量 Skill 自进化的质量：
 
 | 维度 | Hermes 原义 | 核心问题 |
 |------|-----------|---------|
