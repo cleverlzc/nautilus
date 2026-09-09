@@ -522,8 +522,6 @@ v3：  自动评估 → 自动优化系统提示词（接近 Hermes 的 GEPA 路
 
 ## 参考资料
 
-- Hermes 评估器三维模型：华为云核心网 AI Lab《Skill自进化技术洞察及产品落地实践》（jx.huawei.com，2026-07）
-- Agent 自进化-skill 自进化洞察分析：Hermes / Trace2Skill / EvoSkill / SkillOpt / Darwin Skill 五方法对比（jx.huawei.com，2026-07）
 - Nautilus 第一性原理设计方案：`coding-agent-第一性原理设计方案.md`（同目录）
 - Nautilus v1 实现总结：`nautilus-v1-实现总结.md`（同目录）
 - Nautilus 系统目标：`nautilus-系统目标.md`（同目录）
