@@ -65,6 +65,39 @@ def _print_tool_call(name: str, args: dict) -> None:
         print(f"🔧 {name}({args})")
 
 
+def _messages_token_estimate(messages) -> int:
+    """Estimate total tokens across all messages (dict or SDK objects).
+
+    Sums _estimate_tokens over each message's content + tool_calls arguments.
+    """
+    total = 0
+    for m in messages:
+        if isinstance(m, dict):
+            total += _estimate_tokens(m.get("content", ""))
+            for tc in m.get("tool_calls", []) or []:
+                fn = tc.get("function", {})
+                total += _estimate_tokens(fn.get("arguments", ""))
+        else:
+            total += _estimate_tokens(getattr(m, "content", "") or "")
+            for tc in getattr(m, "tool_calls", None) or []:
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    total += _estimate_tokens(getattr(fn, "arguments", "") or "")
+    return total
+
+
+def _compress_history(messages, max_tokens: int) -> None:
+    """In-place sliding window: drop oldest messages (after system+user)
+    until estimated tokens fit the budget.
+
+    Never touches system (index 0) or user prompt (index 1).
+    Messages are naturally grouped (assistant, then its tool results),
+    so popping from index 2 evicts oldest iterations first.
+    """
+    while len(messages) > 2 and _messages_token_estimate(messages) > max_tokens:
+        messages.pop(2)
+
+
 # ---------------------------------------------------------------------------
 # Text-mode tool call parsing (for models without native function calling)
 # ---------------------------------------------------------------------------
@@ -140,6 +173,7 @@ def run_agent(
     stream: bool = False,
     approval: bool = False,
     text_mode: bool = False,
+    max_context_tokens: int = 32000,
 ) -> None:
     """Run the agent loop: think → act → observe → repeat until done.
 
@@ -155,6 +189,9 @@ def run_agent(
     ]
 
     for i in range(max_iter):
+        # Compress history before each LLM call to stay within context budget
+        _compress_history(messages, max_context_tokens)
+
         # In text mode, don't pass tools= to the API (model uses prompt-based calling)
         api_kwargs = {"model": model, "messages": messages}
         if not text_mode:
