@@ -22,7 +22,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nautilus.agent import (
+    _compress_history,
     _estimate_tokens,
+    _messages_token_estimate,
     _print_tool_call,
     _truncate,
     _truncate_for_llm,
@@ -465,6 +467,169 @@ class TestRunAgentTokenBudget:
         assert "Output truncated" in tool_content
         assert "10000" in tool_content
         assert "500" in tool_content
+
+
+# ---------------------------------------------------------------------------
+# _messages_token_estimate tests
+# ---------------------------------------------------------------------------
+
+class TestMessagesTokenEstimate:
+    def test_pure_dict_messages(self):
+        messages = [
+            {"role": "system", "content": "hello world"},
+            {"role": "user", "content": "你好世界"},
+        ]
+        # "hello world" = 11 ASCII → 2 tokens; "你好世界" = 4 CJK → 2 tokens
+        assert _messages_token_estimate(messages) == 4
+
+    def test_empty_messages(self):
+        assert _messages_token_estimate([]) == 0
+
+    def test_dict_with_tool_calls(self):
+        messages = [
+            {"role": "system", "content": "sys"},
+            {
+                "role": "assistant",
+                "content": "thinking",
+                "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {"name": "bash", "arguments": '{"command":"echo hi"}'}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "hi"},
+        ]
+        total = _messages_token_estimate(messages)
+        assert total > 0
+        # "sys" = 3 ASCII → 0 tokens (3//4=0)
+        # "thinking" = 8 ASCII → 2 tokens
+        # '{"command":"echo hi"}' = 21 ASCII → 5 tokens
+        # "hi" = 2 ASCII → 0 tokens
+        assert total == 7  # 0+2+5+0
+
+    def test_sdk_like_objects(self):
+        """Messages with attribute access (not dict) should also work."""
+        class FakeFn:
+            def __init__(self, args):
+                self.arguments = args
+
+        class FakeToolCall:
+            def __init__(self, args):
+                self.function = FakeFn(args)
+
+        class FakeMsg:
+            def __init__(self, content, tool_calls=None):
+                self.content = content
+                self.tool_calls = tool_calls
+
+        messages = [
+            FakeMsg(content="hello world", tool_calls=[FakeToolCall('{"path":"x"}')]),
+        ]
+        # "hello world" = 11 ASCII → 2; '{"path":"x"}' = 12 ASCII → 3
+        assert _messages_token_estimate(messages) == 5
+
+
+# ---------------------------------------------------------------------------
+# _compress_history tests
+# ---------------------------------------------------------------------------
+
+class TestCompressHistory:
+    def test_no_compression_under_budget(self):
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "tool", "tool_call_id": "1", "content": "result"},
+        ]
+        _compress_history(messages, max_tokens=100000)
+        assert len(messages) == 4  # nothing dropped
+
+    def test_compresses_over_budget(self):
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "x" * 1000},
+            {"role": "tool", "tool_call_id": "1", "content": "y" * 1000},
+            {"role": "assistant", "content": "z" * 1000},
+            {"role": "tool", "tool_call_id": "2", "content": "w" * 1000},
+        ]
+        # Total ~4000 chars ASCII → ~1000 tokens. Budget=500 → must drop.
+        _compress_history(messages, max_tokens=500)
+        assert len(messages) < 6  # some dropped
+        assert len(messages) >= 2  # system+user always kept
+
+    def test_never_drops_system_and_user(self):
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "x" * 10000},
+            {"role": "tool", "tool_call_id": "1", "content": "y" * 10000},
+        ]
+        # Even with tiny budget, system+user survive
+        _compress_history(messages, max_tokens=1)
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+
+    def test_empty_history_after_system_user(self):
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "task"},
+        ]
+        _compress_history(messages, max_tokens=1)
+        assert len(messages) == 2  # can't pop, only 2 left
+
+
+# ---------------------------------------------------------------------------
+# run_agent — context compression integration
+# ---------------------------------------------------------------------------
+
+class TestRunAgentContextCompression:
+    """Verify that run_agent compresses history across many iterations."""
+
+    def test_history_compressed_within_budget(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        captured = []
+
+        # 8 iterations, each appending a large tool result
+        responses = [
+            make_response(
+                content=f"iter {n}",
+                tool_calls=[make_tool_call(f"c{n}", "bash", {"command": f"echo iter{n}"})],
+            )
+            for n in range(8)
+        ] + [make_response(content="done", tool_calls=None)]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            captured.append(list(kwargs.get("messages", [])))
+            i = idx[0]
+            idx[0] += 1
+            assert i < len(responses), f"Unexpected LLM call #{i}"
+            return responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.execute_tool", return_value="x" * 2000):
+                run_agent(
+                    prompt="task",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=10,
+                    max_context_tokens=800,
+                    max_tool_output_chars=5000,
+                )
+
+        # Later LLM calls should have bounded messages (system+user + few recent)
+        assert len(captured) >= 2
+        for msgs in captured:
+            assert len(msgs) >= 2  # system+user always kept
+
+        # The last captured messages should be within budget
+        from nautilus.agent import _messages_token_estimate
+        final_tokens = _messages_token_estimate(captured[-1])
+        assert final_tokens <= 800 or len(captured[-1]) == 2
 
 
 # ---------------------------------------------------------------------------
