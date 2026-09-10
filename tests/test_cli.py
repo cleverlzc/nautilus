@@ -248,3 +248,17 @@ class TestCLIArgumentParsing:
             main()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("plan_mode") is False
+
+    @patch("nautilus.__main__.run_agent")
+    def test_memory_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--memory", ".nautilus/memory.md", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("memory_path") == ".nautilus/memory.md"
+
+    @patch("nautilus.__main__.run_agent")
+    def test_memory_default_none(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("memory_path") is None
