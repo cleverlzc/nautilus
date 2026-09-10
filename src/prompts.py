@@ -22,6 +22,8 @@ SYSTEM_PROMPT = """你是一个 coding agent，能在用户的文件系统里读
 
 搜索文件或内容时，优先使用 glob/grep 而非 bash grep/find——它们更快、更精确、自动过滤 .gitignore。
 
+如果系统提示词中包含"项目记忆"段落，请参考其中的历史信息来理解项目上下文。
+
 当你认为任务完成、不需要再调用工具时，直接给出最终回答即可。
 """
 
@@ -66,6 +68,8 @@ SYSTEM_PROMPT_TEXT_MODE = """你是一个 coding agent，能在用户的文件�
 - bash(command)：执行 shell 命令（30 秒超时）。
 
 搜索文件或内容时，优先使用 glob/grep 而非 bash grep/find——它们更快、更精确、自动过滤 .gitignore。
+
+如果系统提示词中包含"项目记忆"段落，请参考其中的历史信息来理解项目上下文。
 
 ## 工具调用格式（重要！）
 
