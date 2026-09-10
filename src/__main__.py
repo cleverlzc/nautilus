@@ -85,6 +85,11 @@ def main() -> None:
         default=False,
         help="启用 plan mode：先生成执行计划，用户确认后再执行。",
     )
+    parser.add_argument(
+        "--memory",
+        default=None,
+        help="启用记忆系统，指定记忆文件路径（如 .nautilus/memory.md）。不传则不启用。",
+    )
 
     args = parser.parse_args()
 
@@ -109,6 +114,7 @@ def main() -> None:
         text_mode=args.text_mode,
         max_context_tokens=args.max_context_tokens,
         plan_mode=args.plan,
+        memory_path=args.memory,
     )
 
 
