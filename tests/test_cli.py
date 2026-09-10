@@ -234,3 +234,17 @@ class TestCLIArgumentParsing:
             main()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("approval") is False
+
+    @patch("nautilus.__main__.run_agent")
+    def test_plan_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--plan", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("plan_mode") is True
+
+    @patch("nautilus.__main__.run_agent")
+    def test_plan_default_false(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("plan_mode") is False
