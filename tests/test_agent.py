@@ -1023,3 +1023,137 @@ class TestDelegateTask:
         # execute_tool should NOT have been called for delegate_task
         # (the sub-agent intercepts it before reaching execute_tool)
         assert mock_exec.call_count == 0
+
+
+# ---------------------------------------------------------------------------
+# run_agent — plan mode
+# ---------------------------------------------------------------------------
+
+class TestPlanMode:
+    """Test the plan→execute two-phase mode.
+
+    Phase 1: LLM generates a plan (no tools, just text)
+    Phase 2: User confirms → normal ReAct loop with plan injected
+    """
+
+    def test_plan_mode_accepted(self, tmp_path, capsys, monkeypatch):
+        """User accepts plan → Phase 2 ReAct loop executes."""
+        monkeypatch.chdir(tmp_path)
+
+        # Phase 1 response: plan text (system message contains "规划模块")
+        # Phase 2 response: final answer (no tool calls)
+        plan_response = make_response(
+            content="1. [glob] 搜索文件\n2. [read_file] 读取文件\n3. [bash] 验证",
+            tool_calls=None,
+        )
+        react_response = make_response(
+            content="按计划执行完成。",
+            tool_calls=None,
+        )
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            msgs = kwargs.get("messages", [])
+            is_plan = len(msgs) > 0 and "规划模块" in (
+                msgs[0].get("content", "") if isinstance(msgs[0], dict)
+                else getattr(msgs[0], "content", "")
+            )
+            i = idx[0]
+            idx[0] += 1
+            if is_plan:
+                return plan_response
+            return react_response
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("builtins.input", return_value="y"):
+                run_agent(
+                    prompt="分析项目",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    plan_mode=True,
+                )
+
+        # 2 LLM calls: 1 plan + 1 react
+        assert idx[0] == 2
+
+        captured = capsys.readouterr()
+        assert "执行计划" in captured.out
+        assert "按计划执行完成" in captured.out
+
+    def test_plan_mode_rejected(self, tmp_path, capsys, monkeypatch):
+        """User rejects plan → agent exits without ReAct loop."""
+        monkeypatch.chdir(tmp_path)
+
+        plan_response = make_response(
+            content="1. [glob] 搜索文件\n2. [bash] 运行测试",
+            tool_calls=None,
+        )
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            return plan_response
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("builtins.input", return_value="n"):
+                run_agent(
+                    prompt="分析项目",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    plan_mode=True,
+                )
+
+        # Only 1 LLM call (plan generation), no ReAct loop
+        assert idx[0] == 1
+
+        captured = capsys.readouterr()
+        assert "执行计划" in captured.out
+        assert "用户取消了执行" in captured.out
+
+    def test_plan_mode_disabled_by_default(self, tmp_path, capsys, monkeypatch):
+        """plan_mode=False (default) → no plan generation, direct ReAct loop."""
+        monkeypatch.chdir(tmp_path)
+
+        react_response = make_response(
+            content="done directly",
+            tool_calls=None,
+        )
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            return react_response
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            # input() should never be called
+            with patch("builtins.input", side_effect=AssertionError("input() should not be called")):
+                run_agent(
+                    prompt="直接执行",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                    plan_mode=False,
+                )
+
+        # 1 LLM call (direct ReAct, no plan phase)
+        assert idx[0] == 1
+
+        captured = capsys.readouterr()
+        assert "done directly" in captured.out
+        assert "执行计划" not in captured.out
