@@ -4,7 +4,7 @@ import json
 import re
 
 from .llm import create_client, complete_with_retry, stream_complete
-from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_SUBAGENT, SYSTEM_PROMPT_TEXT_MODE
+from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_PLAN, SYSTEM_PROMPT_SUBAGENT, SYSTEM_PROMPT_TEXT_MODE
 from .tools import TOOL_SCHEMAS, execute_tool
 
 
@@ -246,19 +246,48 @@ def run_agent(
     approval: bool = False,
     text_mode: bool = False,
     max_context_tokens: int = 32000,
+    plan_mode: bool = False,
 ) -> None:
     """Run the agent loop: think → act → observe → repeat until done.
 
     When text_mode=True, uses prompt-based tool calling instead of OpenAI
     function calling. This enables compatibility with models that don't
     support native tool_calls (e.g., deepseek-r1 on Ollama).
+
+    When plan_mode=True, Phase 1 generates an execution plan for user
+    confirmation before entering Phase 2 (normal ReAct loop).
     """
     client = create_client(api_key=api_key, base_url=base_url)
     system_prompt = SYSTEM_PROMPT_TEXT_MODE if text_mode else SYSTEM_PROMPT
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt},
-    ]
+
+    # Plan mode: Phase 1 — generate execution plan
+    if plan_mode:
+        plan_response = complete_with_retry(
+            client,
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT_PLAN},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        plan = plan_response.choices[0].message.content or ""
+        print(f"📋 执行计划:\n{plan}\n")
+        user_input = input("是否执行此计划? [y/N]: ").strip().lower()
+        if user_input not in ("y", "yes"):
+            print("用户取消了执行。")
+            return
+        # Phase 2: plan confirmed, inject plan into messages as context
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": plan},
+            {"role": "user", "content": "请按计划执行。"},
+        ]
+    else:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
 
     for i in range(max_iter):
         # Compress history before each LLM call to stay within context budget
