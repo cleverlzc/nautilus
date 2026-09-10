@@ -29,6 +29,7 @@ from nautilus.agent import (
     _truncate,
     _truncate_for_llm,
     run_agent,
+    run_subagent,
 )
 
 
@@ -767,3 +768,258 @@ class TestRunAgentApproval:
 
         captured = capsys.readouterr()
         assert "no_approval" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# run_subagent tests
+# ---------------------------------------------------------------------------
+
+class TestRunSubagent:
+    """Test the sub-agent with independent messages list."""
+
+    def test_subagent_returns_final_answer(self, tmp_path, capsys, monkeypatch):
+        """Sub-agent completes a task and returns the final answer string."""
+        monkeypatch.chdir(tmp_path)
+
+        responses = [
+            make_response(
+                content="reading file",
+                tool_calls=[make_tool_call("c1", "read_file", {"path": "test.py"})],
+            ),
+            make_response(
+                content="done: file has 5 lines",
+                tool_calls=None,
+            ),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            assert i < len(responses), f"Unexpected LLM call #{i}"
+            return responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.execute_tool", return_value="line1\nline2\nline3"):
+                result = run_subagent(
+                    prompt="read test.py and count lines",
+                    client=mock_client,
+                    model="mock-model",
+                    max_iter=5,
+                )
+
+        assert "done" in result
+        assert "5 lines" in result
+
+    def test_subagent_independent_messages(self, tmp_path, capsys, monkeypatch):
+        """Sub-agent has independent messages list, not shared with main agent."""
+        monkeypatch.chdir(tmp_path)
+
+        sub_captured_messages = []
+
+        responses = [
+            make_response(
+                content="thinking",
+                tool_calls=[make_tool_call("c1", "read_file", {"path": "x.py"})],
+            ),
+            make_response(content="sub done", tool_calls=None),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            sub_captured_messages.append(list(kwargs.get("messages", [])))
+            i = idx[0]
+            idx[0] += 1
+            return responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.execute_tool", return_value="file content"):
+                result = run_subagent(
+                    prompt="read x.py",
+                    client=mock_client,
+                    model="mock-model",
+                    max_iter=5,
+                )
+
+        # Sub-agent should have its own messages: system + user + assistant + tool + assistant
+        assert len(sub_captured_messages) == 2  # 2 LLM calls
+        # First call: system + user (2 messages)
+        assert len(sub_captured_messages[0]) == 2
+        # Second call: system + user + assistant + tool result (4 messages)
+        assert len(sub_captured_messages[1]) == 4
+
+    def test_subagent_max_iter(self, tmp_path, capsys, monkeypatch):
+        """Sub-agent returns max-iter message when iterations exhausted."""
+        monkeypatch.chdir(tmp_path)
+
+        looping_response = make_response(
+            content="thinking...",
+            tool_calls=[make_tool_call("c_loop", "bash", {"command": "echo loop"})],
+        )
+
+        call_count = [0]
+
+        def mock_create_fn(**kwargs):
+            call_count[0] += 1
+            return looping_response
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.execute_tool", return_value="loop output"):
+                result = run_subagent(
+                    prompt="loop forever",
+                    client=mock_client,
+                    model="mock-model",
+                    max_iter=3,
+                )
+
+        assert call_count[0] == 3
+        assert "最大迭代" in result
+
+
+# ---------------------------------------------------------------------------
+# delegate_task integration tests
+# ---------------------------------------------------------------------------
+
+class TestDelegateTask:
+    """Test that main agent can delegate tasks to sub-agents."""
+
+    def test_delegate_task_calls_subagent(self, tmp_path, capsys, monkeypatch):
+        """Main agent calls delegate_task → run_subagent is invoked."""
+        monkeypatch.chdir(tmp_path)
+
+        # Main agent: delegate_task → final answer
+        main_responses = [
+            make_response(
+                content="delegating",
+                tool_calls=[make_tool_call("c1", "delegate_task", {
+                    "prompt": "read test.py and report"
+                })],
+            ),
+            make_response(content="main done", tool_calls=None),
+        ]
+
+        main_idx = [0]
+        sub_was_called = [False]
+
+        def mock_create_fn(**kwargs):
+            i = main_idx[0]
+            main_idx[0] += 1
+            return main_responses[i]
+
+        def mock_run_subagent(**kwargs):
+            sub_was_called[0] = True
+            return "sub result: file OK"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.run_subagent", side_effect=mock_run_subagent):
+                run_agent(
+                    prompt="delegate read test.py",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                )
+
+        # Sub-agent was called
+        assert sub_was_called[0] is True
+        # Main agent got final answer (2 LLM calls)
+        assert main_idx[0] == 2
+
+    def test_delegate_task_does_not_pollute_main(self, tmp_path, capsys, monkeypatch):
+        """Main agent messages should not contain sub-agent's intermediate tool calls."""
+        monkeypatch.chdir(tmp_path)
+
+        main_responses = [
+            make_response(
+                content="delegating",
+                tool_calls=[make_tool_call("c1", "delegate_task", {
+                    "prompt": "search files"
+                })],
+            ),
+            make_response(content="main done", tool_calls=None),
+        ]
+
+        main_captured = []
+        main_idx = [0]
+
+        def mock_create_fn(**kwargs):
+            main_captured.append(list(kwargs.get("messages", [])))
+            i = main_idx[0]
+            main_idx[0] += 1
+            return main_responses[i]
+
+        def mock_run_subagent(**kwargs):
+            return "found 3 files: calc.py, main.py, utils.py"
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.run_subagent", side_effect=mock_run_subagent):
+                run_agent(
+                    prompt="delegate search",
+                    model="mock-model",
+                    api_key="sk-fake",
+                    max_iter=5,
+                )
+
+        # Main agent should have 2 LLM calls
+        assert len(main_captured) == 2
+        # 2nd call messages should NOT contain sub-agent's intermediate steps
+        main_2nd = main_captured[1]
+        # Should be: system + user + assistant(delegate) + tool result = 4 messages
+        # NOT system + user + assistant + tool + glob_tool + glob_result = 6 messages
+        assert len(main_2nd) <= 5
+
+    def test_subagent_rejects_recursive_delegate(self, tmp_path, capsys, monkeypatch):
+        """Sub-agent rejects delegate_task calls (no recursive sub-agents)."""
+        monkeypatch.chdir(tmp_path)
+
+        sub_responses = [
+            make_response(
+                content="trying to delegate",
+                tool_calls=[make_tool_call("sc1", "delegate_task", {
+                    "prompt": "recursive sub-task"
+                })],
+            ),
+            make_response(content="sub done after rejection", tool_calls=None),
+        ]
+
+        idx = [0]
+
+        def mock_create_fn(**kwargs):
+            i = idx[0]
+            idx[0] += 1
+            return sub_responses[i]
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = mock_create_fn
+
+        with patch("nautilus.agent.create_client", return_value=mock_client):
+            with patch("nautilus.agent.execute_tool", return_value="ok") as mock_exec:
+                result = run_subagent(
+                    prompt="try recursive delegate",
+                    client=mock_client,
+                    model="mock-model",
+                    max_iter=5,
+                )
+
+        # The delegate_task should NOT have called run_subagent recursively
+        # Instead it should have returned an error string as observation
+        assert "done" in result
+        # execute_tool should NOT have been called for delegate_task
+        # (the sub-agent intercepts it before reaching execute_tool)
+        assert mock_exec.call_count == 0
