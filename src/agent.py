@@ -4,6 +4,7 @@ import json
 import re
 
 from .llm import create_client, complete_with_retry, stream_complete
+from .memory import load_memory, append_memory
 from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_PLAN, SYSTEM_PROMPT_SUBAGENT, SYSTEM_PROMPT_TEXT_MODE
 from .tools import TOOL_SCHEMAS, execute_tool
 
@@ -247,6 +248,7 @@ def run_agent(
     text_mode: bool = False,
     max_context_tokens: int = 32000,
     plan_mode: bool = False,
+    memory_path: str | None = None,
 ) -> None:
     """Run the agent loop: think → act → observe → repeat until done.
 
@@ -256,9 +258,18 @@ def run_agent(
 
     When plan_mode=True, Phase 1 generates an execution plan for user
     confirmation before entering Phase 2 (normal ReAct loop).
+
+    When memory_path is set, loads memory file and injects into system prompt,
+    and saves task summary to memory file after completion.
     """
     client = create_client(api_key=api_key, base_url=base_url)
     system_prompt = SYSTEM_PROMPT_TEXT_MODE if text_mode else SYSTEM_PROMPT
+
+    # Load memory and inject into system prompt
+    if memory_path:
+        memory = load_memory(memory_path)
+        if memory:
+            system_prompt += f"\n\n## 项目记忆\n{memory}"
 
     # Plan mode: Phase 1 — generate execution plan
     if plan_mode:
@@ -311,10 +322,15 @@ def run_agent(
 
         # If the model didn't call any tool, this is the final answer.
         if not message.tool_calls:
-            if message.content and not stream:
-                print(f"\n✅ {message.content}")
-            elif message.content and stream:
+            final_answer = message.content or ""
+            if final_answer and not stream:
+                print(f"\n✅ {final_answer}")
+            elif final_answer and stream:
                 print("\n✅ (流式输出完成)")
+            # Save memory before returning
+            if memory_path and final_answer:
+                append_memory(memory_path, f"## {prompt}\n{final_answer}\n")
+                print(f"💾 记忆已保存到 {memory_path}")
             return
 
         # Print assistant thinking if present (non-stream mode; stream already printed).
@@ -408,5 +424,10 @@ def run_agent(
                         "content": _truncate_for_llm(result, max_tool_output_chars),
                     }
                 )
+
+    # max_iter reached — save memory if enabled
+    if memory_path:
+        append_memory(memory_path, f"## {prompt}\n(达到最大迭代次数，未完成)\n")
+        print(f"💾 记忆已保存到 {memory_path}")
 
     print(f"\n⚠️  达到最大迭代次数 ({max_iter})，agent 终止。")
