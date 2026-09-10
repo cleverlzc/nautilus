@@ -4,7 +4,7 @@ import json
 import re
 
 from .llm import create_client, complete_with_retry, stream_complete
-from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_TEXT_MODE
+from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_SUBAGENT, SYSTEM_PROMPT_TEXT_MODE
 from .tools import TOOL_SCHEMAS, execute_tool
 
 
@@ -61,6 +61,8 @@ def _print_tool_call(name: str, args: dict) -> None:
         print(f'🔧 grep("{args.get("pattern", "")}")')
     elif name == "bash":
         print(f'🔧 bash("{args.get("command", "")}")')
+    elif name == "delegate_task":
+        print(f'🔧 delegate_task("{args.get("prompt", "")[:60]}...")')
     else:
         print(f"🔧 {name}({args})")
 
@@ -163,6 +165,76 @@ def _parse_tool_calls_from_text(content: str) -> list:
     return tool_calls
 
 
+def run_subagent(
+    prompt: str,
+    client,
+    model: str = "gpt-4",
+    max_iter: int = 10,
+    max_tool_output_chars: int = 6000,
+    max_context_tokens: int = 32000,
+    text_mode: bool = False,
+) -> str:
+    """Run a sub-agent with independent messages list. Returns final answer string.
+
+    Sub-agent has its own ReAct loop, does not print ✅, does not accept user input.
+    Uses _compress_history to control its own context budget.
+    Does NOT support delegate_task (no recursive sub-agents).
+    """
+    system_prompt = SYSTEM_PROMPT_TEXT_MODE if text_mode else SYSTEM_PROMPT_SUBAGENT
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt},
+    ]
+
+    for i in range(max_iter):
+        _compress_history(messages, max_context_tokens)
+
+        api_kwargs = {"model": model, "messages": messages}
+        if not text_mode:
+            api_kwargs["tools"] = TOOL_SCHEMAS
+
+        response = complete_with_retry(client, **api_kwargs)
+        message = response.choices[0].message
+
+        if text_mode:
+            tool_calls = _parse_tool_calls_from_text(message.content or "")
+            message.tool_calls = tool_calls if tool_calls else None
+
+        if not message.tool_calls:
+            return message.content or ""
+
+        if text_mode:
+            messages.append({"role": "assistant", "content": message.content})
+        else:
+            messages.append(message)
+
+        for call in message.tool_calls:
+            try:
+                args = json.loads(call.function.arguments or "{}")
+            except json.JSONDecodeError:
+                args = {"_raw": call.function.arguments}
+
+            # Sub-agent does NOT support delegate_task (no recursive sub-agents)
+            if call.function.name == "delegate_task":
+                result = "错误：子 agent 不支持委派子任务（不允许递归）。"
+            else:
+                result = execute_tool(call)
+
+            if text_mode:
+                truncated = _truncate_for_llm(result, max_tool_output_chars)
+                messages.append({"role": "user", "content": f"[工具结果] {truncated}"})
+            else:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": _truncate_for_llm(result, max_tool_output_chars),
+                    }
+                )
+
+    return "子 agent 达到最大迭代次数，未完成任务。"
+
+
 def run_agent(
     prompt: str,
     model: str = "gpt-4",
@@ -257,8 +329,21 @@ def run_agent(
 
             _print_tool_call(call.function.name, args)
 
-            # Permission prompt for bash commands (if approval enabled).
-            if approval and call.function.name == "bash":
+            # delegate_task: 委派子任务到独立子 agent
+            if call.function.name == "delegate_task":
+                sub_prompt = args.get("prompt", "")
+                print(f"   📤 委派子 agent: {sub_prompt[:60]}...")
+                result = run_subagent(
+                    prompt=sub_prompt,
+                    client=client,
+                    model=model,
+                    max_iter=10,
+                    max_tool_output_chars=max_tool_output_chars,
+                    max_context_tokens=max_context_tokens,
+                    text_mode=text_mode,
+                )
+                print(f"   📥 子 agent 完成: {result[:60]}...")
+            elif approval and call.function.name == "bash":
                 command = args.get("command", "")
                 user_input = input(f"   执行此命令? [y/N]: ").strip().lower()
                 if user_input not in ("y", "yes"):
@@ -276,8 +361,11 @@ def run_agent(
                         )
                     continue
 
-            result = execute_tool(call, allow_dangerous=approval)
-            print(f"   → {_truncate(result)}\n")
+                result = execute_tool(call, allow_dangerous=True)
+                print(f"   → {_truncate(result)}\n")
+            else:
+                result = execute_tool(call, allow_dangerous=approval)
+                print(f"   → {_truncate(result)}\n")
 
             # In text mode, feed results back as user messages (no tool_call_id)
             if text_mode:
