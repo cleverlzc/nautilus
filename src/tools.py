@@ -136,6 +136,23 @@ TOOL_SCHEMAS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "delegate_task",
+            "description": "将子任务委派给独立子 agent 执行，隔离上下文。子 agent 有独立的对话历史，完成后只返回最终结果，不污染主循环。适用于需要多步工具调用的独立子任务。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "子任务描述。应包含足够上下文让子 agent 独立完成。",
+                    }
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
 ]
 
 
