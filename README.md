@@ -2,7 +2,7 @@
 
 > **鹦鹉螺：螺旋逼近答案的 coding agent**
 >
-> Nautilus 是一个从第一性原理出发、用最小代码量表达 coding agent 本质的 Python 项目。它不是产品级工具，而是一个**学习项目**——用 ~895 行代码验证"LLM + 6 个工具 + 一个 while 循环"就是 coding agent 的不可约核心，并通过 E2E 真实场景验证确认可用。
+> Nautilus 是一个从第一性原理出发、用最小代码量表达 coding agent 本质的 Python 项目。它不是产品级工具，而是一个**学习项目**——用 ~1239 行代码验证"LLM + 7 个工具 + 一个 while 循环 + 上下文压缩 + 子 agent + plan mode + 记忆系统"就是 coding agent 的产品级核心，并通过 E2E 真实场景验证确认可用。
 
 名称取自鹦鹉螺的对数螺旋（Logarithmic Spiral）：ReAct 循环不是原地打转的死循环，而是螺旋式逼近——每一圈 Thought→Action→Observation 都基于上一轮观察修正认知，朝答案收敛。
 
@@ -26,21 +26,20 @@ pip install -e .
 export OPENAI_API_KEY=sk-xxx
 
 # 或 OpenAI 兼容 API（Ollama / vLLM / LM Studio 等）
-export OPENAI_API_KEY=test-ollama-local-serving(eg.)
-export OPENAI_BASE_URL=http://127.0.0.1:11434/v1(eg.)
+export OPENAI_API_KEY=test
+export OPENAI_BASE_URL=http://127.0.0.1:11434/v1
 ```
 
-> **Windows 用户**：需额外设置 `PYTHONIOENCODING=utf-8`，因为 `agent.py` 使用了 emoji 字符。
+> **Windows 用户**：GBK 编码修复已内置（`__main__.py` 入口 `sys.stdout.reconfigure`），无需额外设置 `PYTHONIOENCODING`。
 
 ### 运行
 
 ```bash
-# v2 基础用法（支持 function calling 的模型）
+# 基础用法（支持 function calling 的模型）
 nautilus "创建一个 hello.py，运行它，确认输出 hello world"
 
 # 指定模型和迭代上限
-nautilus --model qwen-plus --base-url https://xxx "修复 bug"
-nautilus --max-iter 30 "重构 utils.py"
+nautilus --model qwen2.5:7b --max-iter 30 "重构 utils.py"
 
 # v2 新增：流式输出
 nautilus --stream "解释这个项目的架构"
@@ -48,11 +47,23 @@ nautilus --stream "解释这个项目的架构"
 # v2 新增：权限审批（bash 命令执行前需确认）
 nautilus --approval "运行 rm -rf build/"
 
-# v2 新增：组合使用
-nautilus --stream --approval "修复 src/calculator.py 中的除法 bug，然后跑测试"
-
 # v2 新增：text-mode（兼容不支持 function calling 的模型，如 deepseek-r1）
 nautilus --model deepseek-r1:8b --text-mode "创建一个 hello.py，运行它"
+
+# v3 新增：上下文压缩（默认 32000 tokens，超出后丢弃最旧迭代）
+nautilus --max-context-tokens 8000 "长任务，多轮迭代"
+
+# v3 新增：子 agent 上下文隔离（LLM 自行决定何时委派）
+nautilus "用 delegate_task 委派子 agent 搜索所有 .py 文件并分析"
+
+# v3 新增：plan mode（先生成计划，用户确认后再执行）
+nautilus --plan "重构整个模块"
+
+# v3 新增：记忆系统（跨会话上下文保持）
+nautilus --memory .nautilus/memory.md "分析这个项目的所有文件结构"
+
+# 组合使用
+nautilus --stream --approval --plan --memory .nautilus/memory.md "复杂任务"
 
 # 支持管道输入
 echo "解释这个项目" | nautilus
@@ -62,7 +73,7 @@ echo "解释这个项目" | nautilus
 
 ```bash
 nautilus --help                                         # 查看 CLI 帮助
-PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="  # 运行 125 个单元测试
+python -m pytest tests/ -v -o "addopts="                # 运行 175 个单元测试
 ```
 
 ---
@@ -77,9 +88,12 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="  # 运行 125 �
 | `--base-url` | API base URL（不传则读 `OPENAI_BASE_URL` 环境变量） | `None` |
 | `--max-iter` | agent 循环最大迭代次数 | `20` |
 | `--max-tool-output` | 单次工具结果回灌 LLM 的最大字符数（约 1500 tokens） | `6000` |
+| `--max-context-tokens` | 对话历史的 token 预算（超出后丢弃最旧迭代） | `32000` |
 | `--stream` | 启用流式输出，实时打印 LLM 生成的 token | `False` |
 | `--approval` | 启用权限审批，bash 命令执行前需用户确认 | `False` |
 | `--text-mode` | 启用文本模式工具调用（兼容不支持 function calling 的模型） | `False` |
+| `--plan` | 启用 plan mode：先生成执行计划，用户确认后再执行 | `False` |
+| `--memory` | 启用记忆系统，指定记忆文件路径（如 `.nautilus/memory.md`） | `None` |
 
 ---
 
@@ -87,24 +101,26 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="  # 运行 125 �
 
 ```
 nautilus/
-├── pyproject.toml              # 16 行 — 项目元数据 + openai 依赖 + CLI 入口（v0.2.0）
-├── nautilus/                   # 源码包（895 行）
-│   ├── __init__.py             #   1 行 — 版本号
-│   ├── __main__.py             #  96 行 — CLI 入口（argparse + 9 个参数）
-│   ├── agent.py                # 258 行 — 核心 ReAct 循环 + token 预算 + stream/approval/text_mode 分支 + stream 序列化修复
+├── pyproject.toml              # 16 行 — 项目元数据 + openai 依赖 + CLI 入口（v0.3.3）
+├── nautilus/                   # 源码包（1239 行）
+│   ├── __init__.py             #   1 行 — 版本号（0.3.3）
+│   ├── __main__.py             # 122 行 — CLI 入口（argparse + 12 个参数 + GBK 编码修复）
+│   ├── agent.py                # 433 行 — ReAct 循环 + 上下文压缩 + 子 agent + plan mode + 记忆注入/保存
 │   ├── llm.py                  # 125 行 — OpenAI 兼容 client 工厂 + complete_with_retry + stream_complete
-│   ├── prompts.py              #  75 行 — 系统提示词 + SYSTEM_PROMPT_TEXT_MODE
-│   └── tools.py                # 340 行 — 6 个工具 + execute_tool 路由 + .gitignore 过滤
-├── tests/                      # 单元测试（125 个，全部通过）
+│   ├── memory.py               #  40 行 — load_memory + save_memory + append_memory
+│   ├── prompts.py              # 119 行 — 系统提示词 + SUBAGENT + PLAN + TEXT_MODE + 记忆说明
+│   └── tools.py                # 399 行 — 7 个工具 + execute_tool 路由 + .gitignore 过滤 + 危险命令过滤
+├── tests/                      # 单元测试（175 个，全部通过）
 │   ├── __init__.py             #   8 行
-│   ├── test_tools.py           # 371 行 — 49 tests
-│   ├── test_agent.py           # 604 行 — 28 tests
+│   ├── test_tools.py           # 417 行 — 63 tests
+│   ├── test_agent.py           # 1159 行 — 46 tests
 │   ├── test_llm.py             # 286 行 — 18 tests
-│   └── test_cli.py             # 207 行 — 22 tests
+│   ├── test_cli.py             # 264 行 — 28 tests
+│   └── test_memory.py          # 198 行 — 13 tests
 └── README.md
 ```
 
-**总计：895 行 Python 源码 + 125 个测试用例（全部通过）。**
+**总计：1239 行 Python 源码 + 175 个测试用例（全部通过）。**
 
 ---
 
@@ -126,26 +142,34 @@ Nautilus 的不可约本质是五个组件：
 
 ```python
 for i in range(max_iter):
-    if text_mode:
+    _compress_history(messages, max_context_tokens)  # v3: 上下文压缩
+
+    if plan_mode and i == 0:
+        # v3: Phase 1 — 生成执行计划，用户确认后注入 messages
+        ...
+
+    if stream:
         message = stream_complete(client, model=model, messages=messages)
     else:
         response = complete_with_retry(client, model=model, messages=messages, tools=TOOL_SCHEMAS)
         message = response.choices[0].message
 
-    if text_mode:
-        message.tool_calls = _parse_tool_calls_from_text(message.content)
-
     if not message.tool_calls:
-        print(message.content)          # 没有工具调用 = 最终回答
+        # 最终回答 — 保存记忆后返回
+        if memory_path and final_answer:
+            append_memory(memory_path, f"## {prompt}\n{final_answer}\n")
         return
     messages.append(message)             # 思考回灌
     for call in message.tool_calls:
-        result = execute_tool(call)      # 行动
+        if call.function.name == "delegate_task":
+            result = run_subagent(prompt=..., client=client)  # v3: 子 agent
+        else:
+            result = execute_tool(call)  # 行动
         messages.append({"role": "tool", "tool_call_id": call.id,
                          "content": _truncate_for_llm(result, max_tool_output_chars)})
 ```
 
-### 六个工具
+### 七个工具
 
 | 工具 | 参数 | 用途 |
 |------|------|------|
@@ -154,69 +178,97 @@ for i in range(max_iter):
 | `edit_file` | `path`, `old_string`, `new_string` | 精确局部修改，要求 old_string 精确匹配且唯一 |
 | `glob` | `pattern`, `root?` | 递归搜索匹配文件名的文件路径，cap 200 条 |
 | `grep` | `pattern`, `path?`, `root?` | 在文件中搜索匹配正则的行，返回 path:lineno:line，cap 100 条 |
+| `delegate_task` | `prompt` | 将子任务委派给独立子 agent 执行，隔离上下文 |
 | `bash` | `command` | 执行 shell 命令，30s 超时，捕获 stdout+stderr+exit code |
 
-### v2 功能
+### 功能演进
 
-| 功能 | 实现 |
-|------|------|
-| **Grep/Glob 搜索工具** | 纯 Python 实现（pathlib + fnmatch + re），自动过滤 .gitignore |
-| **错误恢复** | `complete_with_retry()` 指数退避重试 3 次，区分可重试（RateLimit/Connection/Timeout/InternalError）和不可重试（BadRequest/Auth）错误 |
-| **流式输出** | `stream_complete()` chunk 重组，content 实时 print(flush=True)，tool_calls 累积组装 |
-| **权限审批** | `--approval` 模式下 bash 执行前弹 `input("执行此命令? [y/N]")`，拒绝则 observation 回灌 LLM 自纠 |
-| **.gitignore 感知** | `_load_gitignore()` + `_is_ignored()`，glob/grep 内部自动过滤被忽略文件 |
-| **token 预算控制** | `_truncate_for_llm()` 截断工具结果回灌 LLM（默认 6000 字符），双语标记 |
-| **text-mode** | `--text-mode` prompt-based 工具调用，兼容不支持 function calling 的模型 |
+| 功能 | 版本 | 实现 |
+|------|------|------|
+| **Grep/Glob 搜索工具** | v2 | 纯 Python（pathlib + fnmatch + re），自动过滤 .gitignore |
+| **错误恢复** | v2 | `complete_with_retry()` 指数退避重试 3 次，区分可重试/不可重试错误 |
+| **流式输出** | v2 | `stream_complete()` chunk 重组，content 实时 print(flush=True) |
+| **权限审批** | v2 | `--approval` 模式下 bash 执行前弹 `input`，拒绝则 observation 回灌 LLM 自纠 |
+| **.gitignore 感知** | v2 | `_load_gitignore()` + `_is_ignored()`，glob/grep 自动过滤 |
+| **token 预算控制** | v1 | `_truncate_for_llm()` 截断单条工具结果（默认 6000 字符） |
+| **text-mode** | v2 | `--text-mode` prompt-based 工具调用，兼容任何 LLM |
+| **GBK 编码修复** | v2+P0 | `__main__.py` 入口 `sys.stdout.reconfigure(encoding="utf-8")` |
+| **危险命令过滤** | v2+P0 | `_DANGEROUS_PATTERNS` 黑名单 + `--approval` 绕过 |
+| **上下文压缩** | v3.0 | `_compress_history()` 滑动窗口丢弃最旧迭代（默认 32000 tokens） |
+| **子 agent** | v3.1 | `run_subagent()` 独立 messages + ReAct 循环 + 禁止递归 |
+| **plan mode** | v3.2 | `--plan` Phase 1 生成计划 + 用户确认 + Phase 2 计划注入执行 |
+| **记忆系统** | v3.3 | `--memory` 跨会话上下文保持（加载注入 system prompt + 完成后追加保存） |
 
 ### 终端输出示例
 
 ```
-💭 我来创建一个 hello.py 文件。
-🔧 write_file("hello.py", <20 字符>)
-   → 成功写入 20 字节到 hello.py
+📋 执行计划:                                    # v3 plan mode
+1. [glob] 搜索所有 .py 文件
+2. [read_file] 读取 calc.py
+3. [edit_file] 添加 sqrt 函数
+4. [bash] 运行测试验证
+是否执行此计划? [y/N]: y
 
-🔧 bash("python hello.py")
-   → hello world
+💭 好的，按计划执行。
+🔧 delegate_task("读取 calc.py，分析所有函数")     # v3 子 agent
+   📤 委派子 agent: 读取 calc.py，分析所有函数
+   📥 子 agent 完成: calc.py 包含 7 个函数...
+   → calc.py 包含 7 个函数...
+🔧 edit_file("calc.py", old: <20 字符>, new: <35 字符>)
+   → 成功修改 calc.py
+🔧 bash("python main.py")
+   执行此命令? [y/N]: y                            # v2 权限审批
+   → [LOG] Calculator started
+Result: 3
+...
 [exit code: 0]
 
-✅ 已完成。创建了 hello.py，运行后输出 hello world，验证通过。
+✅ 已完成。添加了 sqrt 函数，测试全部通过。
+
+💾 记忆已保存到 .nautilus/memory.md               # v3 记忆系统
 ```
 
 ---
 
 ## 设计决策
 
-| 决策点 | v1 选择 | v2 演进 | v3+ 计划 |
+| 决策点 | v1 选择 | v2 演进 | v3 演进 |
 |--------|---------|---------|---------|
-| 语言 | Python | — | 可迁移 TS/Rust |
-| 工具集 | read+write+edit+bash | + glob+grep | — |
-| 安全 | 全自动+日志 | + 权限审批（--approval） | — |
-| 上下文 | 全量历史 | + token 预算截断 | 加压缩+子 agent |
-| 输出 | collect 后 print | + 流式输出（--stream） | — |
+| 语言 | Python | — | — |
+| 工具集 | read+write+edit+bash | + glob+grep | + delegate_task |
+| 安全 | 全自动+日志 | + 权限审批 + 危险命令过滤 | — |
+| 上下文 | 全量历史 + token 预算截断 | — | + 整体压缩 + 子 agent 隔离 |
+| 输出 | collect 后 print | + 流式输出 | — |
 | 循环终止 | LLM 不调工具=结束 | + max_iter 兜底 | — |
-| LLM 兼容 | OpenAI function calling | + text-mode（--text-mode） | — |
+| LLM 兼容 | OpenAI function calling | + text-mode | — |
 | 错误处理 | 无 | + 指数退避重试 | — |
+| 执行模式 | 直接执行 | — | + plan mode（先规划再执行） |
+| 跨会话 | 无 | — | + 记忆系统 |
+| 编码 | GBK 崩溃 | + GBK 修复 | — |
 
 ---
 
 ## 演进路线
 
 ```
-v1 (MVP, ~378行)            v2 (可用, ~895行)          v3 (产品级)
-─────────────               ─────────────              ──────────
-agent 循环                 + Grep/Glob(搜索)           + 子 agent(上下文隔离)
-4 个核心工具               + 流式输出                   + 上下文压缩
-  (read/write/edit/bash)  + 权限审批                    + plan mode
-OpenAI API               + .gitignore 感知             + MCP 协议
-CLI                      + 错误恢复                    + 记忆系统
-                         + token 预算控制               + Skills/插件
-                         + text-mode 适配
-                         v0.2.0
+v1 (MVP, ~378行)            v2 (可用, ~895行)          v3 (产品级, ~1239行+)
+─────────────               ─────────────              ──────────────
+agent 循环                 + Grep/Glob(搜索)           + 上下文压缩 (v0.3.0) ✅
+4 个核心工具               + 流式输出                   + 子 agent (v0.3.1) ✅
+  (read/write/edit/bash)  + 权限审批                    + plan mode (v0.3.2) ✅
+token 预算控制             + .gitignore 感知             + 记忆系统 (v0.3.3) ✅
+OpenAI API               + 错误恢复                    + Skills/插件 (v0.3.4) 待实现
+CLI                      + text-mode 适配               + MCP 协议 (v0.3.5) 待实现
+                         + GBK 编码修复
+                         + 危险命令过滤
+                         v0.2.0                       v0.3.3
 ```
 
 **v1 验收标准**：能在真实 repo 里完成"读取文件→理解→修改→跑测试→报告结果"闭环。✅ 已通过
 
-**v2 验收标准**：在真实 LLM 环境下使用 `--stream --approval` 或 `--text-mode` 完成搜索+修改+验证闭环。✅ 已通过（Ollama + deepseek-r1:8b）
+**v2 验收标准**：在真实 LLM 环境下使用 `--stream --approval` 或 `--text-mode` 完成搜索+修改+验证闭环。✅ 已通过（Ollama + qwen2.5:7b / deepseek-r1:8b）
+
+**v3 验收标准**：上下文压缩 + 子 agent + plan mode + 记忆系统在真实 LLM 下全部通过。✅ 已通过（v0.3.0~v0.3.3 全部完成）
 
 ---
 
@@ -226,39 +278,44 @@ CLI                      + 错误恢复                    + 记忆系统
 
 ```bash
 cd .../AIAgent/mycodingagent/nautilus
-PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
+python -m pytest tests/ -v -o "addopts="
 ```
 
 | 测试模块 | 测试数 | 覆盖范围 |
 |---------|--------|---------|
-| `test_tools.py` | 49 | read/write/edit/glob/grep/bash 正常+异常路径、execute_tool 路由、TOOL_SCHEMAS(6)、.gitignore 过滤 |
-| `test_agent.py` | 28 | _truncate/_estimate_tokens/_truncate_for_llm/_print_tool_call + mock ReAct 闭环/max_iter/错误自纠/token 预算/审批 |
+| `test_tools.py` | 63 | read/write/edit/glob/grep/bash/delegate_task + execute_tool 路由 + TOOL_SCHEMAS(7) + .gitignore 过滤 + 危险命令过滤 |
+| `test_agent.py` | 46 | _truncate/_estimate_tokens/_truncate_for_llm/_print_tool_call + mock ReAct 闭环/max_iter/错误自纠/token 预算/审批/子 agent/plan mode |
 | `test_llm.py` | 18 | create_client 工厂 + complete_with_retry 重试 + stream_complete 流式 |
-| `test_cli.py` | 22 | --help/stdin/参数解析 + --stream/--approval/--max-tool-output/--text-mode |
-| **合计** | **125** | **全部通过** |
+| `test_cli.py` | 28 | --help/stdin/参数解析 + 12 个 CLI 参数测试 |
+| `test_memory.py` | 13 | load_memory/save_memory/append_memory + 记忆注入/保存/禁用集成 |
+| **合计** | **175** | **全部通过** |
 
 ### E2E 端到端测试
-
-**text-mode（deepseek-r1:8b）**：
-
-| 场景 | 命令 | 结果 |
-|------|------|------|
-| 基础任务 | `nautilus --text-mode "创建 hello.py，运行它"` | ✅ write_file → bash → hello world |
-| Grep/Glob | `nautilus --text-mode "用 glob 搜索 .py，用 grep 搜索 divide"` | ✅ glob 找到 3 文件 → grep 定位 calc.py:4 |
-| 流式输出 | `nautilus --text-mode --stream "read hello.py"` | ✅ token 实时打印 → read_file → 回答 |
-| 权限审批（同意） | `echo "y" \| nautilus --text-mode --approval "echo ok"` | ✅ 弹 prompt → y → bash 执行成功 |
-| 权限审批（拒绝） | `echo "n" \| nautilus --text-mode --approval "echo no"` | ✅ bash 未执行 → 直接文字回答 |
 
 **native function calling（qwen2.5:7b）**：
 
 | 场景 | 命令 | 结果 |
 |------|------|------|
-| 基础任务 | `nautilus "创建 hello.py，运行它"` | ✅ write_file → bash（python3 失败自纠）→ hello world |
-| Grep/Glob | `nautilus "用 glob 搜索 .py，用 grep 搜索 divide"` | ✅ glob 找到 3 文件 → grep 定位 calc.py:4+6 |
+| 基础任务 | `nautilus "创建 hello.py，运行它"` | ✅ write_file → bash → hello world |
+| Grep/Glob | `nautilus "用 glob 搜索 .py，用 grep 搜索 divide"` | ✅ glob 找到 3 文件 → grep 定位 calc.py |
 | 流式输出 | `nautilus --stream "read hello.py"` | ✅ read_file → 流式打印 → 正确回答 |
 | 权限审批（同意） | `echo "y" \| nautilus --approval "echo ok"` | ✅ 弹 prompt → y → bash 执行成功 |
 | 权限审批（拒绝） | `echo "n" \| nautilus --approval "echo no"` | ✅ bash 未执行 → observation 回灌 |
-| 流式+审批 | `echo "y" \| nautilus --stream --approval "echo combined"` | ✅ 组合正常工作 |
+| 上下文压缩 | `nautilus --max-context-tokens 1500 "7 步任务"` | ✅ 压缩触发后 agent 仍正确完成 |
+| 子 agent | `nautilus "用 delegate_task 委派子 agent 搜索"` | ✅ 子 agent 独立执行 → 结果回灌主循环 |
+| plan mode（确认） | `echo "y" \| nautilus --plan "分析项目"` | ✅ Phase 1 生成计划 → Phase 2 执行 |
+| plan mode（拒绝） | `echo "n" \| nautilus --plan "添加函数"` | ✅ "用户取消了执行" → 不进入循环 |
+| 记忆（首次写入） | `nautilus --memory .nautilus/memory.md "glob 搜索"` | ✅ 💾 记忆已保存 → 文件创建正确 |
+| 记忆（第二次读取） | `nautilus --memory .nautilus/memory.md "上次做了什么？"` | ✅ agent 引用上次结果 → 记忆追加 |
+
+**text-mode（deepseek-r1:8b）**：
+
+| 场景 | 命令 | 结果 |
+|------|------|------|
+| 基础任务 | `nautilus --text-mode "创建 hello.py"` | ✅ write_file → bash → hello world |
+| Grep/Glob | `nautilus --text-mode "glob + grep 搜索"` | ✅ glob 找到 3 文件 → grep 定位 |
+| 流式输出 | `nautilus --text-mode --stream "read hello.py"` | ✅ token 实时打印 → 回答 |
+| 权限审批 | `nautilus --text-mode --approval "echo ok"` | ✅ 弹 prompt → 确认/拒绝 |
 
 ---
 
@@ -266,13 +323,28 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 
 | 文档 | 内容 |
 |------|------|
-| `coding-agent-第一性原理设计方案.md` | 第一性原理分解、标杆对比、三对设计张力、v1/v2 架构、演进路线 |
+| `coding-agent-第一性原理设计方案.md` | 第一性原理分解、标杆对比、三对设计张力、v1/v2/v3 架构、演进路线 |
 | `nautilus-v1-实现计划.md` | v1 7 文件分解、工具 schema、CLI 设计 |
 | `nautilus-v1-实现总结.md` | v1 实际行数、验证结果、使用方式 |
 | `nautilus-v1-验证报告.md` | v1 77 个测试用例验证报告 |
 | `nautilus-v2-实现计划.md` | v2 5 功能实现细节、文件清单、CLI 参数 |
-| `nautilus-v2-实现总结.md` | v2 实际行数、6 功能验证结果、E2E 测试结果、使用方式 |
-| `nautilus-v2-验证报告.md` | v2 125 个测试 + 5 个 E2E 场景验证报告 |
+| `nautilus-v2-实现总结.md` | v2 实际行数、6 功能验证结果、E2E 测试结果 |
+| `nautilus-v2-验证报告.md` | v2 125 个测试 + 11 个 E2E 场景验证报告 |
+| `nautilus-v3-特性优先级排序.md` | v3 9 个候选特性优先级排序（ToC + 工程视角） |
+| `nautilus-v3-实现计划(整体).md` | v3 6 个小版本（v0.3.0~v0.3.5）整体实现计划 |
+| `nautilus-v0.3.0-上下文压缩-实现计划.md` | v0.3.0 上下文压缩实现计划 |
+| `nautilus-v0.3.0-上下文压缩-实现总结.md` | v0.3.0 实现总结 |
+| `nautilus-v0.3.0-上下文压缩-验证报告.md` | v0.3.0 146 tests + 4 E2E 场景验证报告 |
+| `nautilus-v0.3.1-子agent(上下文隔离)-实现计划.md` | v0.3.1 子 agent 实现计划 |
+| `nautilus-v0.3.1-子agent(上下文隔离)-实现总结.md` | v0.3.1 实现总结 |
+| `nautilus-v0.3.1-子agent(上下文隔离)-验证报告.md` | v0.3.1 155 tests + 3 E2E 场景验证报告 |
+| `nautilus-v0.3.2-plan mode-实现计划.md` | v0.3.2 plan mode 实现计划 |
+| `nautilus-v0.3.2-plan mode-实现总结.md` | v0.3.2 实现总结 |
+| `nautilus-v0.3.2-plan mode-验证报告.md` | v0.3.2 160 tests + 3 E2E 场景验证报告 |
+| `nautilus-v0.3.3-记忆系统-实现计划.md` | v0.3.3 记忆系统实现计划 |
+| `nautilus-v0.3.3-记忆系统-实现总结.md` | v0.3.3 实现总结 |
+| `nautilus-v0.3.3-记忆系统-验证报告.md` | v0.3.3 175 tests + 3 E2E 场景验证报告 |
+| `nautilus-mvp(v1+v2)审视报告.md` | 资深 coding agent 工程师视角的 v1+v2 MVP 审视报告 |
 | `nautilus-系统目标.md` | 企业架构（TOGAF 四域）+ 约束理论（Goldratt ToC/DBR）双视角分析 |
 | `nautilus-结果质量评估标准.md` | Hermes 评估器三维模型适配：正确性/过程精准度/简洁度 |
 | `nautilus名称含义.md` | 鹦鹉螺对数螺旋与 ReAct 循环的隐喻映射 |
@@ -281,10 +353,11 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 
 ## 已知限制
 
-1. **Windows GBK 编码**：`agent.py` 使用 emoji（🔧✅⚠️💭🔄），Windows 默认 GBK 编码会崩溃。规避：`PYTHONIOENCODING=utf-8`。
-2. **text-mode 精度**：不支持 function calling 的模型依赖 prompt-based 工具调用，模型可能不严格遵循 ` ```tool_call {json} ` ` 格式，需要更强的系统提示词引导。
-3. **无上下文压缩**：全量历史回灌 LLM（有 token 预算截断兜底），长任务仍可能撑爆 context window。
-4. **bash 无安全过滤**：`shell=True` 无命令过滤（有 `--approval` 审批门可选）。
+1. **text-mode 精度**：不支持 function calling 的模型依赖 prompt-based 工具调用，模型可能不严格遵循 ` ```tool_call {json} ` ` 格式，需要更强的系统提示词引导。
+2. **上下文压缩**：`_compress_history` 丢弃最旧迭代而非总结，过小预算（<1000 tokens）可能导致 agent 失去关键上下文。
+3. **bash 无沙箱**：`shell=True` 无容器隔离（有 `--approval` 审批门 + 危险命令黑名单兜底）。
+4. **记忆无检索**：当前记忆系统是全量追加+全量注入，无向量检索/关键词搜索（长记忆文件会膨胀 system prompt）。
+5. **上级目录 pyproject.toml 干扰**：pytest 运行需 `-o "addopts="` 覆盖上级配置。
 
 ---
 
@@ -292,7 +365,7 @@ PYTHONIOENCODING=utf-8 python -m pytest tests/ -v -o "addopts="
 
 > **agent 的本质不在单个组件的强度，而在组合方式。**
 
-Claude Code 的 51 万行是在这 895 行之上叠加多 agent / 上下文压缩 / MCP 协议 / 记忆系统 / Skills 插件的工程化。Nautilus 用最简组合验证：**LLM + 6 个工具 + 一个 while 循环 = 可用的 coding agent**。
+Claude Code 的 51 万行是在这 1239 行之上叠加更复杂的安全/UX/扩展/多 agent 的工程化。Nautilus 用最简组合验证：**LLM + 7 个工具 + 一个 while 循环 + 上下文压缩 + 子 agent + plan mode + 记忆系统 = 产品级 coding agent**。
 
 参考标杆：
 
