@@ -79,6 +79,12 @@ def main() -> None:
         default=32000,
         help="对话历史的 token 预算（默认 32000，超出后丢弃最旧迭代）。",
     )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        default=False,
+        help="启用 plan mode：先生成执行计划，用户确认后再执行。",
+    )
 
     args = parser.parse_args()
 
@@ -102,6 +108,7 @@ def main() -> None:
         approval=args.approval,
         text_mode=args.text_mode,
         max_context_tokens=args.max_context_tokens,
+        plan_mode=args.plan,
     )
 
 
