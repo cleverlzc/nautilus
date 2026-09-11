@@ -262,3 +262,17 @@ class TestCLIArgumentParsing:
             main()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("memory_path") is None
+
+    @patch("nautilus.__main__.run_agent")
+    def test_skills_dir_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--skills-dir", ".nautilus/skills", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("skills_dir") == ".nautilus/skills"
+
+    @patch("nautilus.__main__.run_agent")
+    def test_skills_dir_default_none(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("skills_dir") is None
