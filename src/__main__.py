@@ -95,6 +95,12 @@ def main() -> None:
         default=None,
         help="启用 Skills 系统，指定 skills 目录路径（如 .nautilus/skills）。不传则不启用。",
     )
+    parser.add_argument(
+        "--mcp-server",
+        action="append",
+        default=None,
+        help="连接 MCP server（可多次指定）。如 --mcp-server 'npx @mcp/filesystem'",
+    )
 
     args = parser.parse_args()
 
@@ -121,6 +127,7 @@ def main() -> None:
         plan_mode=args.plan,
         memory_path=args.memory,
         skills_dir=args.skills_dir,
+        mcp_servers=args.mcp_server,
     )
 
 
