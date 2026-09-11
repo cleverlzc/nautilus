@@ -251,6 +251,7 @@ def run_agent(
     plan_mode: bool = False,
     memory_path: str | None = None,
     skills_dir: str | None = None,
+    mcp_servers: list[str] | None = None,
 ) -> None:
     """Run the agent loop: think → act → observe → repeat until done.
 
@@ -280,6 +281,23 @@ def run_agent(
             matched = match_skill(prompt, skills)
             if matched:
                 system_prompt += f"\n\n## 技能指导\n{matched}"
+
+    # Connect to MCP servers and merge tool schemas
+    mcp_clients = []
+    mcp_tools = []
+    if mcp_servers:
+        from .mcp import MCPClient
+        for server_cmd in mcp_servers:
+            try:
+                mcp_client = MCPClient(server_cmd)
+                mcp_clients.append(mcp_client)
+                mcp_tools.extend(mcp_client.get_tools())
+                print(f"🔗 MCP server connected: {server_cmd} ({len(mcp_client.get_tools())} tools)")
+            except Exception as e:
+                print(f"⚠️  MCP server connection failed: {server_cmd}: {e}")
+
+    # Merge tool schemas
+    all_tools = TOOL_SCHEMAS + mcp_tools
 
     # Plan mode: Phase 1 — generate execution plan
     if plan_mode:
@@ -317,7 +335,7 @@ def run_agent(
         # In text mode, don't pass tools= to the API (model uses prompt-based calling)
         api_kwargs = {"model": model, "messages": messages}
         if not text_mode:
-            api_kwargs["tools"] = TOOL_SCHEMAS
+            api_kwargs["tools"] = all_tools
 
         if stream:
             message = stream_complete(client, **api_kwargs)
@@ -341,6 +359,11 @@ def run_agent(
             if memory_path and final_answer:
                 append_memory(memory_path, f"## {prompt}\n{final_answer}\n")
                 print(f"💾 记忆已保存到 {memory_path}")
+            # Close MCP connections
+            for c in mcp_clients:
+                c.close()
+            if mcp_clients:
+                print("🔗 MCP connections closed.")
             return
 
         # Print assistant thinking if present (non-stream mode; stream already printed).
@@ -398,6 +421,21 @@ def run_agent(
                     text_mode=text_mode,
                 )
                 print(f"   📥 子 agent 完成: {result[:60]}...")
+            elif call.function.name not in (
+                "read_file", "write_file", "edit_file",
+                "glob", "grep", "bash", "delegate_task",
+            ):
+                # MCP tool: not a built-in tool, try MCP clients
+                result = None
+                for mcp_client in mcp_clients:
+                    try:
+                        result = mcp_client.call_tool(call.function.name, args)
+                        break
+                    except Exception:
+                        continue
+                if result is None:
+                    result = f"错误：未知工具：{call.function.name}"
+                print(f"   → {_truncate(result)}\n")
             elif approval and call.function.name == "bash":
                 command = args.get("command", "")
                 user_input = input(f"   执行此命令? [y/N]: ").strip().lower()
@@ -439,5 +477,11 @@ def run_agent(
     if memory_path:
         append_memory(memory_path, f"## {prompt}\n(达到最大迭代次数，未完成)\n")
         print(f"💾 记忆已保存到 {memory_path}")
+
+    # Close MCP connections
+    for c in mcp_clients:
+        c.close()
+    if mcp_clients:
+        print("🔗 MCP connections closed.")
 
     print(f"\n⚠️  达到最大迭代次数 ({max_iter})，agent 终止。")
