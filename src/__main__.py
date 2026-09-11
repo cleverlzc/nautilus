@@ -90,6 +90,11 @@ def main() -> None:
         default=None,
         help="启用记忆系统，指定记忆文件路径（如 .nautilus/memory.md）。不传则不启用。",
     )
+    parser.add_argument(
+        "--skills-dir",
+        default=None,
+        help="启用 Skills 系统，指定 skills 目录路径（如 .nautilus/skills）。不传则不启用。",
+    )
 
     args = parser.parse_args()
 
@@ -115,6 +120,7 @@ def main() -> None:
         max_context_tokens=args.max_context_tokens,
         plan_mode=args.plan,
         memory_path=args.memory,
+        skills_dir=args.skills_dir,
     )
 
 
