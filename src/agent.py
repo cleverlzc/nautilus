@@ -6,6 +6,7 @@ import re
 from .llm import create_client, complete_with_retry, stream_complete
 from .memory import load_memory, append_memory
 from .prompts import SYSTEM_PROMPT, SYSTEM_PROMPT_PLAN, SYSTEM_PROMPT_SUBAGENT, SYSTEM_PROMPT_TEXT_MODE
+from .skills import list_skills, match_skill
 from .tools import TOOL_SCHEMAS, execute_tool
 
 
@@ -249,6 +250,7 @@ def run_agent(
     max_context_tokens: int = 32000,
     plan_mode: bool = False,
     memory_path: str | None = None,
+    skills_dir: str | None = None,
 ) -> None:
     """Run the agent loop: think → act → observe → repeat until done.
 
@@ -270,6 +272,14 @@ def run_agent(
         memory = load_memory(memory_path)
         if memory:
             system_prompt += f"\n\n## 项目记忆\n{memory}"
+
+    # Load matching skill and inject into system prompt
+    if skills_dir:
+        skills = list_skills(skills_dir)
+        if skills:
+            matched = match_skill(prompt, skills)
+            if matched:
+                system_prompt += f"\n\n## 技能指导\n{matched}"
 
     # Plan mode: Phase 1 — generate execution plan
     if plan_mode:
