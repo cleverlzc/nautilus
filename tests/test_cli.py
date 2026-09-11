@@ -276,3 +276,17 @@ class TestCLIArgumentParsing:
             main()
         call_kwargs = mock_run.call_args
         assert call_kwargs.kwargs.get("skills_dir") is None
+
+    @patch("nautilus.__main__.run_agent")
+    def test_mcp_server_flag(self, mock_run):
+        with patch("sys.argv", ["nautilus", "--mcp-server", "cmd1", "--mcp-server", "cmd2", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("mcp_servers") == ["cmd1", "cmd2"]
+
+    @patch("nautilus.__main__.run_agent")
+    def test_mcp_server_default_none(self, mock_run):
+        with patch("sys.argv", ["nautilus", "task"]):
+            main()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("mcp_servers") is None
