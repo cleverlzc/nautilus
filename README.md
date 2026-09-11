@@ -2,7 +2,7 @@
 
 > **鹦鹉螺：螺旋逼近答案的 coding agent**
 >
-> Nautilus 是一个从第一性原理出发、用最小代码量表达 coding agent 本质的 Python 项目。它不是产品级工具，而是一个**学习项目**——用 ~1346 行代码验证"LLM + 7 个工具 + 一个 while 循环 + 上下文压缩 + 子 agent + plan mode + 记忆系统 + Skills/插件"就是 coding agent 的产品级核心，并通过 E2E 真实场景验证确认可用。
+> Nautilus 是一个从第一性原理出发、用最小代码量表达 coding agent 本质的 Python 项目。它不是产品级工具，而是一个**学习项目**——用 ~1496 行代码验证"LLM + 7+N 个工具 + 一个 while 循环 + 上下文压缩 + 子 agent + plan mode + 记忆系统 + Skills/插件 + MCP 协议"就是 coding agent 的产品级核心，并通过 E2E 真实场景验证确认可用。
 
 名称取自鹦鹉螺的对数螺旋（Logarithmic Spiral）：ReAct 循环不是原地打转的死循环，而是螺旋式逼近——每一圈 Thought→Action→Observation 都基于上一轮观察修正认知，朝答案收敛。
 
@@ -65,8 +65,11 @@ nautilus --memory .nautilus/memory.md "分析这个项目的所有文件结构"
 # v3 新增：Skills/插件（工作流复用）
 nautilus --skills-dir .nautilus/skills "部署项目到生产环境"
 
+# v3 新增：MCP 协议（连接外部工具服务器）
+nautilus --mcp-server "npx @mcp/filesystem /tmp" "读取 /tmp/test.txt"
+
 # 组合使用
-nautilus --stream --approval --plan --memory .nautilus/memory.md --skills-dir .nautilus/skills "复杂任务"
+nautilus --stream --approval --plan --memory .nautilus/memory.md --skills-dir .nautilus/skills --mcp-server "npx @mcp/filesystem" "复杂任务"
 
 # 支持管道输入
 echo "解释这个项目" | nautilus
@@ -76,7 +79,7 @@ echo "解释这个项目" | nautilus
 
 ```bash
 nautilus --help                                         # 查看 CLI 帮助
-python -m pytest tests/ -v -o "addopts="                # 运行 191 个单元测试
+python -m pytest tests/ -v -o "addopts="                # 运行 201 个单元测试
 ```
 
 ---
@@ -98,6 +101,7 @@ python -m pytest tests/ -v -o "addopts="                # 运行 191 个单元�
 | `--plan` | 启用 plan mode：先生成执行计划，用户确认后再执行 | `False` |
 | `--memory` | 启用记忆系统，指定记忆文件路径（如 `.nautilus/memory.md`） | `None` |
 | `--skills-dir` | 启用 Skills 系统，指定 skills 目录路径（如 `.nautilus/skills`） | `None` |
+| `--mcp-server` | 连接 MCP server（可多次指定），如 `--mcp-server 'npx @mcp/filesystem'` | `None` |
 
 ---
 
@@ -105,28 +109,31 @@ python -m pytest tests/ -v -o "addopts="                # 运行 191 个单元�
 
 ```
 nautilus/
-├── pyproject.toml              # 16 行 — 项目元数据 + openai 依赖 + CLI 入口（v0.3.4）
-├── nautilus/                   # 源码包（1346 行）
-│   ├── __init__.py             #   1 行 — 版本号（0.3.4）
-│   ├── __main__.py             # 128 行 — CLI 入口（argparse + 13 个参数 + GBK 编码修复）
-│   ├── agent.py                # 443 行 — ReAct 循环 + 上下文压缩 + 子 agent + plan mode + 记忆注入/保存 + skills 注入
+├── pyproject.toml              # 16 行 — 项目元数据 + openai 依赖 + CLI 入口（v0.3.5）
+├── nautilus/                   # 源码包（1496 行）
+│   ├── __init__.py             #   1 行 — 版本号（0.3.5）
+│   ├── __main__.py             # 135 行 — CLI 入口（argparse + 14 个参数 + GBK 编码修复）
+│   ├── agent.py                # 487 行 — ReAct 循环 + 上下文压缩 + 子 agent + plan mode + 记忆 + skills + MCP 连接/路由/关闭
 │   ├── llm.py                  # 125 行 — OpenAI 兼容 client 工厂 + complete_with_retry + stream_complete
+│   ├── mcp.py                  #  99 行 — MCPClient（stdio + JSON-RPC 2.0）
 │   ├── memory.py               #  40 行 — load_memory + save_memory + append_memory
 │   ├── prompts.py              # 121 行 — 系统提示词 + SUBAGENT + PLAN + TEXT_MODE + 记忆/技能说明
 │   ├── skills.py               #  89 行 — list_skills + load_skill + match_skill + frontmatter 解析
 │   └── tools.py                # 399 行 — 7 个工具 + execute_tool 路由 + .gitignore 过滤 + 危险命令过滤
-├── tests/                      # 单元测试（191 个，全部通过）
+├── tests/                      # 单元测试（201 个，全部通过）
 │   ├── __init__.py             #   8 行
 │   ├── test_tools.py           # 417 行 — 63 tests
 │   ├── test_agent.py           # 1159 行 — 46 tests
 │   ├── test_llm.py             # 286 行 — 18 tests
-│   ├── test_cli.py             # 280 行 — 30 tests
+│   ├── test_cli.py             # 294 行 — 32 tests
 │   ├── test_memory.py          # 198 行 — 13 tests
-│   └── test_skills.py          # 232 行 — 14 tests
+│   ├── test_skills.py          # 232 行 — 14 tests
+│   ├── test_mcp.py             # 236 行 — 8 tests
+│   └── mcp_echo_server.py      #  80 行 — E2E 测试用 MCP server
 └── README.md
 ```
 
-**总计：1346 行 Python 源码 + 191 个测试用例（全部通过）。**
+**总计：1496 行 Python 源码 + 201 个测试用例（全部通过）。**
 
 ---
 
@@ -157,7 +164,7 @@ for i in range(max_iter):
     if stream:
         message = stream_complete(client, model=model, messages=messages)
     else:
-        response = complete_with_retry(client, model=model, messages=messages, tools=TOOL_SCHEMAS)
+        response = complete_with_retry(client, model=model, messages=messages, tools=all_tools)
         message = response.choices[0].message
 
     if not message.tool_calls:
@@ -175,7 +182,7 @@ for i in range(max_iter):
                          "content": _truncate_for_llm(result, max_tool_output_chars)})
 ```
 
-### 七个工具
+### 七个内置工具 + N 个 MCP 工具
 
 | 工具 | 参数 | 用途 |
 |------|------|------|
@@ -205,6 +212,7 @@ for i in range(max_iter):
 | **plan mode** | v3.2 | `--plan` Phase 1 生成计划 + 用户确认 + Phase 2 计划注入执行 |
 | **记忆系统** | v3.3 | `--memory` 跨会话上下文保持（加载注入 system prompt + 完成后追加保存） |
 | **Skills/插件** | v3.4 | `--skills-dir` 工作流复用（关键词匹配 skill 注入 system prompt"技能指导"段落） |
+| **MCP 协议** | v3.5 | `--mcp-server` 连接外部工具服务器（stdio + JSON-RPC 2.0，动态发现+调用 MCP 工具） |
 
 ### 终端输出示例
 
@@ -233,6 +241,7 @@ Result: 3
 ✅ 已完成。添加了 sqrt 函数，测试全部通过。
 
 💾 记忆已保存到 .nautilus/memory.md               # v3 记忆系统
+🔗 MCP connections closed.                            # v3 MCP 协议
 ```
 
 ---
@@ -252,6 +261,7 @@ Result: 3
 | 执行模式 | 直接执行 | — | + plan mode（先规划再执行） |
 | 跨会话 | 无 | — | + 记忆系统 |
 | 工作流复用 | 无 | — | + Skills/插件（关键词匹配注入） |
+| 工具扩展 | 7 内置工具 | — | + MCP 协议（动态发现外部工具） |
 | 编码 | GBK 崩溃 | + GBK 修复 | — |
 
 ---
@@ -259,24 +269,24 @@ Result: 3
 ## 演进路线
 
 ```
-v1 (MVP, ~378行)            v2 (可用, ~895行)          v3 (产品级, ~1346行+)
+v1 (MVP, ~378行)            v2 (可用, ~895行)          v3 (产品级, ~1496行)
 ─────────────               ─────────────              ──────────────
 agent 循环                 + Grep/Glob(搜索)           + 上下文压缩 (v0.3.0) ✅
 4 个核心工具               + 流式输出                   + 子 agent (v0.3.1) ✅
   (read/write/edit/bash)  + 权限审批                    + plan mode (v0.3.2) ✅
 token 预算控制             + .gitignore 感知             + 记忆系统 (v0.3.3) ✅
 OpenAI API               + 错误恢复                    + Skills/插件 (v0.3.4) ✅
-CLI                      + text-mode 适配               + MCP 协议 (v0.3.5) 待实现
+CLI                      + text-mode 适配               + MCP 协议 (v0.3.5) ✅
                          + GBK 编码修复
                          + 危险命令过滤
-                         v0.2.0                       v0.3.4
+                         v0.2.0                       v0.3.5
 ```
 
 **v1 验收标准**：能在真实 repo 里完成"读取文件→理解→修改→跑测试→报告结果"闭环。✅ 已通过
 
 **v2 验收标准**：在真实 LLM 环境下使用 `--stream --approval` 或 `--text-mode` 完成搜索+修改+验证闭环。✅ 已通过（Ollama + qwen2.5:7b / deepseek-r1:8b）
 
-**v3 验收标准**：上下文压缩 + 子 agent + plan mode + 记忆系统 + Skills/插件在真实 LLM 下全部通过。✅ 已通过（v0.3.0~v0.3.4 全部完成）
+**v3 验收标准**：上下文压缩 + 子 agent + plan mode + 记忆系统 + Skills/插件 + MCP 协议在真实 LLM 下全部通过。✅ 已通过（v0.3.0~v0.3.5 全部完成）
 
 ---
 
@@ -294,10 +304,11 @@ python -m pytest tests/ -v -o "addopts="
 | `test_tools.py` | 63 | read/write/edit/glob/grep/bash/delegate_task + execute_tool 路由 + TOOL_SCHEMAS(7) + .gitignore 过滤 + 危险命令过滤 |
 | `test_agent.py` | 46 | _truncate/_estimate_tokens/_truncate_for_llm/_print_tool_call + mock ReAct 闭环/max_iter/错误自纠/token 预算/审批/子 agent/plan mode |
 | `test_llm.py` | 18 | create_client 工厂 + complete_with_retry 重试 + stream_complete 流式 |
-| `test_cli.py` | 30 | --help/stdin/参数解析 + 13 个 CLI 参数测试 |
+| `test_cli.py` | 32 | --help/stdin/参数解析 + 14 个 CLI 参数测试 |
 | `test_memory.py` | 13 | load_memory/save_memory/append_memory + 记忆注入/保存/禁用集成 |
 | `test_skills.py` | 14 | list_skills/load_skill/match_skill + 技能注入/禁用/无匹配集成 |
-| **合计** | **191** | **全部通过** |
+| `test_mcp.py` | 8 | MCPClient initialize/list_tools/call_tool/close + MCP 工具合并/调用/失败降级集成 |
+| **合计** | **201** | **全部通过** |
 
 ### E2E 端到端测试
 
@@ -318,6 +329,7 @@ python -m pytest tests/ -v -o "addopts="
 | 记忆（第二次读取） | `nautilus --memory .nautilus/memory.md "上次做了什么？"` | ✅ agent 引用上次结果 → 记忆追加 |
 | Skills（有匹配） | `nautilus --skills-dir .nautilus/skills "部署项目"` | ✅ Agent 按 skill 步骤执行（building→testing→deploying） |
 | Skills（无匹配） | `nautilus --skills-dir .nautilus/skills "glob 搜索文件"` | ✅ skill 未匹配，agent 按默认行为执行 |
+| MCP（连接+调用） | `nautilus --mcp-server "python mcp_echo_server.py" "用 echo_text 回显 hello"` | ✅ 🔗 connected → 🔧 echo_text → [MCP] hello → 🔗 closed |
 
 **text-mode（deepseek-r1:8b）**：
 
@@ -358,6 +370,9 @@ python -m pytest tests/ -v -o "addopts="
 | `nautilus-v0.3.4-Skills&插件-实现计划.md` | v0.3.4 Skills/插件实现计划 |
 | `nautilus-v0.3.4-Skills&插件-实现总结.md` | v0.3.4 实现总结 |
 | `nautilus-v0.3.4-Skills&插件-验证报告.md` | v0.3.4 191 tests + 3 E2E 场景验证报告 |
+| `nautilus-v0.3.5-MCP协议-实现计划.md` | v0.3.5 MCP 协议实现计划 |
+| `nautilus-v0.3.5-MCP协议-实现总结.md` | v0.3.5 实现总结 |
+| `nautilus-v0.3.5-MCP协议-验证报告.md` | v0.3.5 201 tests + 2 E2E 场景验证报告 |
 | `nautilus-mvp(v1+v2)审视报告.md` | 资深 coding agent 工程师视角的 v1+v2 MVP 审视报告 |
 | `nautilus-系统目标.md` | 企业架构（TOGAF 四域）+ 约束理论（Goldratt ToC/DBR）双视角分析 |
 | `nautilus-结果质量评估标准.md` | Hermes 评估器三维模型适配：正确性/过程精准度/简洁度 |
@@ -372,7 +387,8 @@ python -m pytest tests/ -v -o "addopts="
 3. **bash 无沙箱**：`shell=True` 无容器隔离（有 `--approval` 审批门 + 危险命令黑名单兜底）。
 4. **记忆无检索**：当前记忆系统是全量追加+全量注入，无向量检索/关键词搜索（长记忆文件会膨胀 system prompt）。
 5. **Skills 关键词匹配**：当前 skill 匹配是简单关键词重叠，无语义匹配/向量检索（复杂 prompt 可能匹配不准）。
-6. **上级目录 pyproject.toml 干扰**：pytest 运行需 `-o "addopts="` 覆盖上级配置。
+6. **MCP 仅 stdio 传输**：当前 MCP 实现仅支持 stdio 子进程传输，不支持 SSE/HTTP 传输。
+7. **上级目录 pyproject.toml 干扰**：pytest 运行需 `-o "addopts="` 覆盖上级配置。
 
 ---
 
@@ -380,7 +396,7 @@ python -m pytest tests/ -v -o "addopts="
 
 > **agent 的本质不在单个组件的强度，而在组合方式。**
 
-Claude Code 的 51 万行是在这 1346 行之上叠加更复杂的安全/UX/扩展/多 agent 的工程化。Nautilus 用最简组合验证：**LLM + 7 个工具 + 一个 while 循环 + 上下文压缩 + 子 agent + plan mode + 记忆系统 + Skills/插件 = 产品级 coding agent**。
+Claude Code 的 51 万行是在这 1496 行之上叠加更复杂的安全/UX/扩展/多 agent 的工程化。Nautilus 用最简组合验证：**LLM + 7+N 个工具 + 一个 while 循环 + 上下文压缩 + 子 agent + plan mode + 记忆系统 + Skills/插件 + MCP 协议 = 产品级 coding agent**。
 
 参考标杆：
 
